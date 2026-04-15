@@ -39,7 +39,8 @@ public class BotApiClient
     public async Task UpdateBookingStatusAsync(Guid bookingId, BookingStatus status)
     {
         var client = CreateAuthedClient();
-        var request = new HttpRequestMessage(HttpMethod.Put, $"/api/bookings/{bookingId}/status?status={status.ToString().ToLowerInvariant()}")
+        var normalizedStatus = status == BookingStatus.BlockedByMaster ? "blocked_by_master" : status.ToString().ToLowerInvariant();
+        var request = new HttpRequestMessage(HttpMethod.Put, $"/api/bookings/{bookingId}/status?status={normalizedStatus}")
         {
             Content = new StringContent(string.Empty, Encoding.UTF8, "application/json")
         };

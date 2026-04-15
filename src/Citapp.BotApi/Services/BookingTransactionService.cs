@@ -91,7 +91,7 @@ public class BookingTransactionService
         }
 
         var target = status.Trim().ToLowerInvariant();
-        if (target is not ("complete" or "completed" or "no_show" or "noshow" or "cancel" or "cancelled"))
+        if (target is not ("complete" or "completed" or "no_show" or "noshow" or "cancel" or "cancelled" or "blocked_by_master" or "blockedbymaster"))
         {
             throw new BookingConflictException("Unsupported status transition.");
         }
@@ -107,11 +107,13 @@ public class BookingTransactionService
             return;
         }
 
-        var normalized = target is "complete" ? "completed" : target;
-        if (normalized == "noshow")
+        var normalized = target switch
         {
-            normalized = "no_show";
-        }
+            "complete" => "completed",
+            "noshow" => "no_show",
+            "blockedbymaster" => "blocked_by_master",
+            _ => target
+        };
 
         await _bookings.UpdateStatusAsync(bookingId, tenantId, normalized);
     }
@@ -363,7 +365,7 @@ public class BookingTransactionService
         const string sql = """
             select start_at, end_at
             from bookings
-            where tenant_id = @tenant_id and date = @date and status <> 'cancelled'
+            where tenant_id = @tenant_id and date = @date and status in ('booked', 'blocked_by_master')
             for update
             """;
 

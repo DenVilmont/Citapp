@@ -27,6 +27,7 @@
                 <MudSelectItem Value="Completed">Completed</MudSelectItem>
                 <MudSelectItem Value="Cancelled">Cancelled</MudSelectItem>
                 <MudSelectItem Value="NoShow">NoShow</MudSelectItem>
+                <MudSelectItem Value="BlockedByMaster">BlockedByMaster</MudSelectItem>
             </MudSelect>
         </MudItem>
         <MudItem xs="12" md="3" Class="d-flex align-end">
@@ -63,6 +64,7 @@
             <MudStack Row="true" Spacing="1">
                 <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="() => UpdateStatusAsync(context.Id, BookingStatus.Completed)">complete</MudButton>
                 <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="() => UpdateStatusAsync(context.Id, BookingStatus.NoShow)">no_show</MudButton>
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="() => UpdateStatusAsync(context.Id, BookingStatus.BlockedByMaster)">block</MudButton>
                 <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error" OnClick="() => UpdateStatusAsync(context.Id, BookingStatus.Cancelled)">cancel</MudButton>
             </MudStack>
         </MudTd>
