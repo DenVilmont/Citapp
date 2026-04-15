@@ -192,6 +192,30 @@ public class CustomerRepository
         await cmd.ExecuteNonQueryAsync();
     }
 
+    public async Task UpdateProfileAsync(Guid id, Guid tenantId, string? displayName, string? phone)
+    {
+        const string sql = """
+            update customers
+            set
+                display_name = coalesce(nullif(@display_name, ''), display_name),
+                phone = case
+                    when nullif(@phone, '') is null then phone
+                    when phone is distinct from @phone then @phone
+                    else phone
+                end
+            where id = @id and tenant_id = @tenant_id
+            """;
+
+        await using var conn = new NpgsqlConnection(_connectionString);
+        await conn.OpenAsync();
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("id", id);
+        cmd.Parameters.AddWithValue("tenant_id", tenantId);
+        cmd.Parameters.AddWithValue("display_name", (object?)displayName ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("phone", (object?)phone ?? DBNull.Value);
+        await cmd.ExecuteNonQueryAsync();
+    }
+
     private static CustomerDto ReadCustomer(IDataRecord row)
     {
         return new CustomerDto(
@@ -823,5 +847,21 @@ public class WebhookEventRepository
         cmd.Parameters.AddWithValue("payload_json", payloadJson);
         var affected = await cmd.ExecuteNonQueryAsync();
         return affected > 0;
+    }
+
+    public async Task MarkProcessedAsync(string externalEventId, bool processed)
+    {
+        const string sql = """
+            update inbound_webhook_events
+            set processed = @processed
+            where external_event_id = @external_event_id
+            """;
+
+        await using var conn = new NpgsqlConnection(_connectionString);
+        await conn.OpenAsync();
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("external_event_id", externalEventId);
+        cmd.Parameters.AddWithValue("processed", processed);
+        await cmd.ExecuteNonQueryAsync();
     }
 }

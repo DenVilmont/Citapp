@@ -29,22 +29,36 @@ public class WebhookProcessor
             if (!IsValidSignature(raw, signature)) return Results.Unauthorized();
 
             var payload = JsonSerializer.Deserialize<WhatsAppWebhookPayload>(raw);
-            var msg = payload?.Entry?.FirstOrDefault()?.Changes?.FirstOrDefault()?.Value?.Messages?.FirstOrDefault();
-            if (msg is null) return Results.Ok();
+            if (payload?.Entry is null || payload.Entry.Count == 0) return Results.Ok();
 
-            var phoneNumberId = payload!.Entry[0].Changes[0].Value.Metadata.PhoneNumberId;
-            var tenantId = await _tenants.GetByPhoneNumberIdAsync(phoneNumberId);
-            var accepted = await _events.TrySaveAsync(msg.Id, tenantId, raw);
-            if (!accepted) return Results.Ok();
-            if (tenantId is null) { _logger.LogInformation("Unknown phone_number_id {phoneNumberId}", phoneNumberId); return Results.Ok(); }
+            foreach (var entry in payload.Entry)
+            {
+                foreach (var change in entry.Changes ?? [])
+                {
+                    var phoneNumberId = change.Value?.Metadata?.PhoneNumberId;
+                    if (string.IsNullOrWhiteSpace(phoneNumberId))
+                    {
+                        continue;
+                    }
 
-            var contact = payload.Entry[0].Changes[0].Value.Contacts?.FirstOrDefault();
-            var customer = await _customers.GetOrCreateAsync(tenantId.Value, msg.From, contact?.Profile?.Name ?? "Клиент");
-            await _customers.UpdateLastSeenAsync(customer.Id, tenantId.Value);
+                    var tenantId = await _tenants.GetByPhoneNumberIdAsync(phoneNumberId);
+                    if (tenantId is null)
+                    {
+                        _logger.LogInformation("Unknown phone_number_id {phoneNumberId}", phoneNumberId);
+                    }
 
-            var interactiveType = msg.Interactive?.Type;
-            var payloadId = msg.Interactive?.ButtonReply?.Id ?? msg.Interactive?.ListReply?.Id;
-            await _fsm.HandleAsync(tenantId.Value, customer.Id, msg.From, phoneNumberId, msg.Type, interactiveType, payloadId, msg.Text?.Body);
+                    foreach (var status in change.Value?.Statuses ?? [])
+                    {
+                        await ProcessStatusAsync(status, tenantId, raw);
+                    }
+
+                    foreach (var msg in change.Value?.Messages ?? [])
+                    {
+                        await ProcessMessageAsync(msg, change.Value?.Contacts, tenantId, phoneNumberId, raw);
+                    }
+                }
+            }
+
             return Results.Ok();
         }
         catch (Exception ex)
@@ -62,4 +76,54 @@ public class WebhookProcessor
         var expected = "sha256=" + Convert.ToHexString(hash).ToLowerInvariant();
         return expected == signatureHeader;
     }
+
+    private async Task ProcessStatusAsync(MessageStatus status, Guid? tenantId, string rawPayload)
+    {
+        var eventId = BuildStatusEventId(status);
+        var accepted = await _events.TrySaveAsync(eventId, tenantId, rawPayload);
+        if (!accepted)
+        {
+            return;
+        }
+
+        await _events.MarkProcessedAsync(eventId, true);
+    }
+
+    private async Task ProcessMessageAsync(Message msg, List<Contact>? contacts, Guid? tenantId, string phoneNumberId, string rawPayload)
+    {
+        var eventId = BuildMessageEventId(msg);
+        var accepted = await _events.TrySaveAsync(eventId, tenantId, rawPayload);
+        if (!accepted)
+        {
+            return;
+        }
+
+        if (tenantId is null)
+        {
+            await _events.MarkProcessedAsync(eventId, true);
+            return;
+        }
+
+        try
+        {
+            var contact = contacts?.FirstOrDefault(x => x.WaId == msg.From) ?? contacts?.FirstOrDefault();
+            var displayName = contact?.Profile?.Name ?? "Клиент";
+            var customer = await _customers.GetOrCreateAsync(tenantId.Value, msg.From, displayName);
+            await _customers.UpdateProfileAsync(customer.Id, tenantId.Value, contact?.Profile?.Name, msg.From);
+            await _customers.UpdateLastSeenAsync(customer.Id, tenantId.Value);
+
+            var interactiveType = msg.Interactive?.Type;
+            var payloadId = msg.Interactive?.ButtonReply?.Id ?? msg.Interactive?.ListReply?.Id;
+            await _fsm.HandleAsync(tenantId.Value, customer.Id, msg.From, phoneNumberId, msg.Type, interactiveType, payloadId, msg.Text?.Body);
+            await _events.MarkProcessedAsync(eventId, true);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Message processing failed for message {messageId}", msg.Id);
+            await _events.MarkProcessedAsync(eventId, false);
+        }
+    }
+
+    private static string BuildMessageEventId(Message message) => $"message:{message.Id}";
+    private static string BuildStatusEventId(MessageStatus status) => $"status:{status.Id}:{status.Status}:{status.Timestamp}";
 }

@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Citapp.BotApi.Services;
@@ -6,7 +7,12 @@ namespace Citapp.BotApi.Services;
 public class WhatsAppMessageSender
 {
     private readonly HttpClient _http;
-    public WhatsAppMessageSender(HttpClient http) => _http = http;
+    private readonly ILogger<WhatsAppMessageSender> _logger;
+    public WhatsAppMessageSender(HttpClient http, ILogger<WhatsAppMessageSender> logger)
+    {
+        _http = http;
+        _logger = logger;
+    }
 
     public Task SendTextAsync(string to, string phoneNumberId, string text)
         => SendAsync(phoneNumberId, new WhatsAppTextRequest(to, new WhatsAppTextBody(text)));
@@ -52,7 +58,28 @@ public class WhatsAppMessageSender
     {
         var token = Environment.GetEnvironmentVariable("WHATSAPP_ACCESS_TOKEN") ?? string.Empty;
         _http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-        await _http.PostAsJsonAsync($"https://graph.facebook.com/v19.0/{phoneNumberId}/messages", request);
+        var response = await _http.PostAsJsonAsync($"https://graph.facebook.com/v19.0/{phoneNumberId}/messages", request);
+        var responseBody = await response.Content.ReadAsStringAsync();
+
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogError(
+                "WhatsApp send failed for phone_number_id={phoneNumberId}. Status={statusCode}, Body={responseBody}",
+                phoneNumberId,
+                (int)response.StatusCode,
+                responseBody);
+            response.EnsureSuccessStatusCode();
+        }
+
+        var metaResponse = JsonSerializer.Deserialize<WhatsAppSendResponse>(responseBody);
+        if (metaResponse?.Messages is null || metaResponse.Messages.Count == 0 || string.IsNullOrWhiteSpace(metaResponse.Messages[0].Id))
+        {
+            _logger.LogError(
+                "WhatsApp send returned unexpected payload for phone_number_id={phoneNumberId}. Body={responseBody}",
+                phoneNumberId,
+                responseBody);
+            throw new InvalidOperationException("WhatsApp send response was missing message id.");
+        }
     }
 }
 
@@ -110,3 +137,6 @@ public record WhatsAppListRow(
     [property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("title")] string Title,
     [property: JsonPropertyName("description")] string Description);
+
+public record WhatsAppSendResponse([property: JsonPropertyName("messages")] List<WhatsAppSendMessage>? Messages);
+public record WhatsAppSendMessage([property: JsonPropertyName("id")] string Id);
