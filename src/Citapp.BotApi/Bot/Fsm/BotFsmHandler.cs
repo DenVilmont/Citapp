@@ -16,6 +16,7 @@ public class BotFsmHandler
     private readonly SlotCalculationService _slots;
     private readonly BookingTransactionService _bookingTransactions;
     private readonly WhatsAppMessageSender _sender;
+    private readonly ILogger<BotFsmHandler> _logger;
 
     public BotFsmHandler(
         ConversationStateRepository states,
@@ -24,7 +25,8 @@ public class BotFsmHandler
         BookingRepository bookings,
         SlotCalculationService slots,
         BookingTransactionService bookingTransactions,
-        WhatsAppMessageSender sender)
+        WhatsAppMessageSender sender,
+        ILogger<BotFsmHandler> logger)
     {
         _states = states;
         _tenants = tenants;
@@ -33,6 +35,7 @@ public class BotFsmHandler
         _slots = slots;
         _bookingTransactions = bookingTransactions;
         _sender = sender;
+        _logger = logger;
     }
 
     public async Task HandleAsync(Guid tenantId, Guid customerId, string waUserId, string phoneNumberId, DateTimeOffset customerLastSeenAt, string messageType, string? interactiveType, string? payloadId, string? textBody)
@@ -205,7 +208,7 @@ public class BotFsmHandler
 
         if (input.PayloadId == $"svc_book:{payload.ServiceId.Value}")
         {
-            await SendDateMenuAsync(tenantId, customerId, payload.ServiceId.Value, waUserId, phoneNumberId);
+            await SendDateMenuAsync(tenantId, customerId, payload.ServiceId.Value, waUserId, phoneNumberId, payload.ExistingBookingId);
             return;
         }
 
@@ -240,13 +243,13 @@ public class BotFsmHandler
 
         if (input.PayloadId is null || !input.PayloadId.StartsWith("date:", StringComparison.Ordinal))
         {
-            await SendDateMenuAsync(tenantId, customerId, payload.ServiceId.Value, waUserId, phoneNumberId);
+            await SendDateMenuAsync(tenantId, customerId, payload.ServiceId.Value, waUserId, phoneNumberId, payload.ExistingBookingId);
             return;
         }
 
         if (!DateOnly.TryParseExact(input.PayloadId[5..], "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
         {
-            await SendDateMenuAsync(tenantId, customerId, payload.ServiceId.Value, waUserId, phoneNumberId);
+            await SendDateMenuAsync(tenantId, customerId, payload.ServiceId.Value, waUserId, phoneNumberId, payload.ExistingBookingId);
             return;
         }
 
@@ -295,13 +298,12 @@ public class BotFsmHandler
 
         var endAt = startAt.ToUniversalTime().AddMinutes(service.DurationMinutes);
         var confirmPayload = payload with { StartAt = startAt.ToUniversalTime(), EndAt = endAt };
-        await SaveStateAsync(tenantId, customerId, BotState.BookingConfirm, confirmPayload);
 
         var tenantTimezone = ResolveTimeZone(tenant.Timezone);
         var localStart = TimeZoneInfo.ConvertTime(startAt, tenantTimezone);
         var localEnd = localStart.AddMinutes(service.DurationMinutes);
 
-        await _sender.SendButtonsAsync(
+        var sendResult = await _sender.SendButtonsAsync(
             waUserId,
             phoneNumberId,
             $"Подтвердить запись: {localStart:dd.MM}, {localStart:HH:mm} — {localEnd:HH:mm}?",
@@ -310,6 +312,15 @@ public class BotFsmHandler
                 ("book_no", "Назад"),
                 ("main_menu", "В меню")
             ]);
+
+        await SaveStateIfSentAsync(
+            sendResult,
+            tenantId,
+            customerId,
+            BotState.BookingConfirm,
+            confirmPayload,
+            currentState.State,
+            "booking_time_to_confirm");
     }
 
     private async Task HandleBookingConfirmAsync(UserInput input, ConversationSnapshot currentState, TenantBotSettings tenant, Guid tenantId, Guid customerId, string waUserId, string phoneNumberId)
@@ -407,8 +418,7 @@ public class BotFsmHandler
             return;
         }
 
-        await SaveStateAsync(tenantId, customerId, BotState.CancelConfirm, new FsmPayload { BookingId = bookingId });
-        await _sender.SendButtonsAsync(
+        var sendResult = await _sender.SendButtonsAsync(
             waUserId,
             phoneNumberId,
             "Отменить эту запись?",
@@ -416,6 +426,15 @@ public class BotFsmHandler
                 ("cancel_yes", "Да"),
                 ("cancel_no", "Нет")
             ]);
+
+        await SaveStateIfSentAsync(
+            sendResult,
+            tenantId,
+            customerId,
+            BotState.CancelConfirm,
+            new FsmPayload { BookingId = bookingId },
+            currentState.State,
+            "cancel_select_to_confirm");
     }
 
     private async Task HandleCancelConfirmAsync(UserInput input, ConversationSnapshot currentState, Guid tenantId, Guid customerId, string waUserId, string phoneNumberId)
@@ -496,17 +515,20 @@ public class BotFsmHandler
 
         if (input.PayloadId == "dup_rebook")
         {
-            await _sender.SendTextAsync(waUserId, phoneNumberId, "Выберите новую дату. Текущая запись будет отменена только после подтверждения новой.");
-            await SendDateMenuAsync(tenantId, customerId, payload.ServiceId.Value, waUserId, phoneNumberId);
-            await SaveStateAsync(
-                tenantId,
-                customerId,
-                BotState.BookingSelectDate,
-                new FsmPayload
-                {
-                    ServiceId = payload.ServiceId,
-                    ExistingBookingId = payload.ExistingBookingId
-                });
+            var introSendResult = await _sender.SendTextAsync(waUserId, phoneNumberId, "Выберите новую дату. Текущая запись будет отменена только после подтверждения новой.");
+            if (!introSendResult.IsSent)
+            {
+                LogStateNotAdvanced(
+                    introSendResult,
+                    tenantId,
+                    customerId,
+                    BotState.BookingConfirm,
+                    BotState.BookingSelectDate,
+                    "duplicate_rebook_intro");
+                return;
+            }
+
+            await SendDateMenuAsync(tenantId, customerId, payload.ServiceId.Value, waUserId, phoneNumberId, payload.ExistingBookingId);
             return;
         }
 
@@ -534,7 +556,7 @@ public class BotFsmHandler
 
     private async Task ShowMainMenuAsync(TenantBotSettings tenant, Guid tenantId, Guid customerId, string waUserId, string phoneNumberId)
     {
-        await _sender.SendButtonsAsync(
+        var sendResult = await _sender.SendButtonsAsync(
             waUserId,
             phoneNumberId,
             tenant.GreetingText,
@@ -542,7 +564,7 @@ public class BotFsmHandler
                 ("menu_book", "Записаться"),
                 ("menu_manage", "Мои записи / Отменить")
             ]);
-        await SaveStateAsync(tenantId, customerId, BotState.MainMenu, null);
+        await SaveStateIfSentAsync(sendResult, tenantId, customerId, BotState.MainMenu, null, null, "show_main_menu");
     }
 
     private async Task SendServicesMenuAsync(Guid tenantId, Guid customerId, string waUserId, string phoneNumberId)
@@ -570,8 +592,8 @@ public class BotFsmHandler
             .ToList();
         AppendMainMenuRow(rows);
 
-        await _sender.SendListAsync(waUserId, phoneNumberId, "Выберите услугу", "Услуги", rows);
-        await SaveStateAsync(tenantId, customerId, BotState.BookingSelectService, new FsmPayload());
+        var sendResult = await _sender.SendListAsync(waUserId, phoneNumberId, "Выберите услугу", "Услуги", rows);
+        await SaveStateIfSentAsync(sendResult, tenantId, customerId, BotState.BookingSelectService, new FsmPayload(), null, "show_services_menu");
     }
 
     private async Task SendServiceChoiceMenuAsync(Guid tenantId, Guid customerId, Guid serviceId, string waUserId, string phoneNumberId)
@@ -585,7 +607,7 @@ public class BotFsmHandler
 
         if (service.HasPrimaryImage && !string.IsNullOrWhiteSpace(service.PrimaryImageUrl))
         {
-            await _sender.SendButtonsAsync(
+            var sendResult = await _sender.SendButtonsAsync(
                 waUserId,
                 phoneNumberId,
                 $"Для \"{service.Name}\" доступно фото. Что показать?",
@@ -594,7 +616,14 @@ public class BotFsmHandler
                     ($"svc_book:{serviceId}", "Продолжить запись"),
                     ("main_menu", "В меню")
                 ]);
-            await SaveStateAsync(tenantId, customerId, BotState.BookingSelectService, new FsmPayload { ServiceId = serviceId });
+            await SaveStateIfSentAsync(
+                sendResult,
+                tenantId,
+                customerId,
+                BotState.BookingSelectService,
+                new FsmPayload { ServiceId = serviceId },
+                null,
+                "service_choice_menu");
             return;
         }
 
@@ -615,7 +644,7 @@ public class BotFsmHandler
             await _sender.SendImageAsync(waUserId, phoneNumberId, service.PrimaryImageUrl, service.Name);
         }
 
-        await _sender.SendButtonsAsync(
+        var sendResult = await _sender.SendButtonsAsync(
             waUserId,
             phoneNumberId,
             $"Продолжить запись на \"{service.Name}\"?",
@@ -624,7 +653,14 @@ public class BotFsmHandler
                 ("main_menu", "В меню")
             ]);
 
-        await SaveStateAsync(tenantId, customerId, BotState.PortfolioView, new FsmPayload { ServiceId = serviceId });
+        await SaveStateIfSentAsync(
+            sendResult,
+            tenantId,
+            customerId,
+            BotState.PortfolioView,
+            new FsmPayload { ServiceId = serviceId },
+            null,
+            "service_photo_continue");
     }
 
     private async Task StartBookingFlowAsync(Guid tenantId, Guid customerId, Guid serviceId, string waUserId, string phoneNumberId)
@@ -636,7 +672,7 @@ public class BotFsmHandler
             var tenant = await _tenants.GetBotSettingsAsync(tenantId);
             var timezone = ResolveTimeZone(tenant?.Timezone);
             var localStart = TimeZoneInfo.ConvertTime(duplicate.StartAt, timezone);
-            await _sender.SendButtonsAsync(
+            var sendResult = await _sender.SendButtonsAsync(
                 waUserId,
                 phoneNumberId,
                 $"У вас уже есть запись на {serviceName}: {localStart:dd.MM.yyyy} в {localStart:HH:mm}. Что делаем?",
@@ -645,14 +681,21 @@ public class BotFsmHandler
                     ("dup_rebook", "Перезаписаться"),
                     ("main_menu", "В меню")
                 ]);
-            await SaveStateAsync(tenantId, customerId, BotState.BookingConfirm, new FsmPayload { ServiceId = serviceId, ExistingBookingId = duplicate.Id, DuplicatePrompt = true });
+            await SaveStateIfSentAsync(
+                sendResult,
+                tenantId,
+                customerId,
+                BotState.BookingConfirm,
+                new FsmPayload { ServiceId = serviceId, ExistingBookingId = duplicate.Id, DuplicatePrompt = true },
+                null,
+                "duplicate_prompt");
             return;
         }
 
         await SendDateMenuAsync(tenantId, customerId, serviceId, waUserId, phoneNumberId);
     }
 
-    private async Task SendDateMenuAsync(Guid tenantId, Guid customerId, Guid serviceId, string waUserId, string phoneNumberId)
+    private async Task SendDateMenuAsync(Guid tenantId, Guid customerId, Guid serviceId, string waUserId, string phoneNumberId, Guid? existingBookingId = null)
     {
         var dates = await _slots.GetAvailableDatesAsync(tenantId, serviceId, 30);
         if (dates.Count == 0)
@@ -672,8 +715,15 @@ public class BotFsmHandler
             .ToList();
         AppendMainMenuRow(rows);
 
-        await _sender.SendListAsync(waUserId, phoneNumberId, "Выберите дату", "Даты", rows);
-        await SaveStateAsync(tenantId, customerId, BotState.BookingSelectDate, new FsmPayload { ServiceId = serviceId });
+        var sendResult = await _sender.SendListAsync(waUserId, phoneNumberId, "Выберите дату", "Даты", rows);
+        await SaveStateIfSentAsync(
+            sendResult,
+            tenantId,
+            customerId,
+            BotState.BookingSelectDate,
+            new FsmPayload { ServiceId = serviceId, ExistingBookingId = existingBookingId },
+            null,
+            "show_date_menu");
     }
 
     private async Task SendTimeMenuAsync(Guid tenantId, Guid customerId, Guid serviceId, DateOnly date, string waUserId, string phoneNumberId)
@@ -682,7 +732,9 @@ public class BotFsmHandler
         if (slots.Count == 0)
         {
             await _sender.SendTextAsync(waUserId, phoneNumberId, "На эту дату нет свободного времени. Выберите другую дату.");
-            await SendDateMenuAsync(tenantId, customerId, serviceId, waUserId, phoneNumberId);
+            var previous = await LoadStateAsync(tenantId, customerId);
+            var previousPayload = Deserialize(previous.Payload);
+            await SendDateMenuAsync(tenantId, customerId, serviceId, waUserId, phoneNumberId, previousPayload.ExistingBookingId);
             return;
         }
 
@@ -691,10 +743,11 @@ public class BotFsmHandler
             .ToList();
         AppendMainMenuRow(rows);
 
-        await _sender.SendListAsync(waUserId, phoneNumberId, "Выберите время", "Время", rows);
+        var sendResult = await _sender.SendListAsync(waUserId, phoneNumberId, "Выберите время", "Время", rows);
         var previous = await LoadStateAsync(tenantId, customerId);
         var previousPayload = Deserialize(previous.Payload);
-        await SaveStateAsync(
+        await SaveStateIfSentAsync(
+            sendResult,
             tenantId,
             customerId,
             BotState.BookingSelectTime,
@@ -703,7 +756,9 @@ public class BotFsmHandler
                 ServiceId = serviceId,
                 Date = date,
                 ExistingBookingId = previousPayload.ExistingBookingId
-            });
+            },
+            previous.State,
+            "show_time_menu");
     }
 
     private async Task SendCancelableBookingsMenuAsync(Guid tenantId, Guid customerId, string waUserId, string phoneNumberId)
@@ -735,8 +790,8 @@ public class BotFsmHandler
             .ToList();
         AppendMainMenuRow(rows);
 
-        await _sender.SendListAsync(waUserId, phoneNumberId, "Выберите запись для отмены", "Записи", rows);
-        await SaveStateAsync(tenantId, customerId, BotState.CancelSelectBooking, new FsmPayload());
+        var sendResult = await _sender.SendListAsync(waUserId, phoneNumberId, "Выберите запись для отмены", "Записи", rows);
+        await SaveStateIfSentAsync(sendResult, tenantId, customerId, BotState.CancelSelectBooking, new FsmPayload(), null, "show_cancelable_bookings");
     }
 
     private async Task RepeatWithButtonsHintAsync(BotState state, string? payloadJson, Guid tenantId, Guid customerId, string waUserId, string phoneNumberId, TenantBotSettings? tenant = null)
@@ -771,7 +826,7 @@ public class BotFsmHandler
                 var date = Deserialize(payloadJson);
                 if (date.ServiceId is not null)
                 {
-                    await SendDateMenuAsync(tenantId, customerId, date.ServiceId.Value, waUserId, phoneNumberId);
+                    await SendDateMenuAsync(tenantId, customerId, date.ServiceId.Value, waUserId, phoneNumberId, date.ExistingBookingId);
                 }
 
                 break;
@@ -930,6 +985,42 @@ public class BotFsmHandler
     {
         var names = await _services.GetNamesByIdsAsync(tenantId, [serviceId]);
         return names.GetValueOrDefault(serviceId, "Услуга");
+    }
+
+    private async Task SaveStateIfSentAsync(
+        OutboundSendResult sendResult,
+        Guid tenantId,
+        Guid customerId,
+        BotState newState,
+        FsmPayload? payload,
+        BotState? previousState,
+        string transition)
+    {
+        if (sendResult.IsSent)
+        {
+            await SaveStateAsync(tenantId, customerId, newState, payload);
+            return;
+        }
+
+        LogStateNotAdvanced(sendResult, tenantId, customerId, previousState, newState, transition);
+    }
+
+    private void LogStateNotAdvanced(
+        OutboundSendResult sendResult,
+        Guid tenantId,
+        Guid customerId,
+        BotState? previousState,
+        BotState nextState,
+        string transition)
+    {
+        _logger.LogWarning(
+            "Bot state was not advanced because outbound message was not sent. tenant_id={tenantId}, customer_id={customerId}, from_state={fromState}, to_state={toState}, transition={transition}, outbound_outcome={outboundOutcome}",
+            tenantId,
+            customerId,
+            previousState,
+            nextState,
+            transition,
+            sendResult.Outcome);
     }
 
     private static FsmPayload Deserialize(string? payloadJson)

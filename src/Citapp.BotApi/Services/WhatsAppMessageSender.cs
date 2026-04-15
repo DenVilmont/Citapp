@@ -24,10 +24,10 @@ public class WhatsAppMessageSender
         return new Scope(() => SendContext.Value = previousContext);
     }
 
-    public Task SendTextAsync(string to, string phoneNumberId, string text)
+    public Task<OutboundSendResult> SendTextAsync(string to, string phoneNumberId, string text)
         => SendAsync(phoneNumberId, new WhatsAppTextRequest(to, new WhatsAppTextBody(text)));
 
-    public Task SendButtonsAsync(string to, string phoneNumberId, string body, List<(string Id, string Title)> buttons)
+    public Task<OutboundSendResult> SendButtonsAsync(string to, string phoneNumberId, string body, List<(string Id, string Title)> buttons)
     {
         if (buttons.Count > 3) throw new ArgumentException("WhatsApp buttons limit is 3.");
         var request = new WhatsAppInteractiveRequest(
@@ -41,7 +41,7 @@ public class WhatsAppMessageSender
         return SendAsync(phoneNumberId, request);
     }
 
-    public Task SendListAsync(string to, string phoneNumberId, string body, string buttonLabel, List<(string Id, string Title, string Description)> rows)
+    public Task<OutboundSendResult> SendListAsync(string to, string phoneNumberId, string body, string buttonLabel, List<(string Id, string Title, string Description)> rows)
     {
         if (rows.Count > 10) throw new ArgumentException("WhatsApp list rows limit is 10.");
         var request = new WhatsAppInteractiveRequest(
@@ -61,10 +61,10 @@ public class WhatsAppMessageSender
         return SendAsync(phoneNumberId, request);
     }
 
-    public Task SendImageAsync(string to, string phoneNumberId, string imageUrl, string caption)
+    public Task<OutboundSendResult> SendImageAsync(string to, string phoneNumberId, string imageUrl, string caption)
         => SendAsync(phoneNumberId, new WhatsAppImageRequest(to, new WhatsAppImageBody(imageUrl, caption)));
 
-    private async Task SendAsync(string phoneNumberId, object request)
+    private async Task<OutboundSendResult> SendAsync(string phoneNumberId, object request)
     {
         var context = SendContext.Value;
         if (!IsInsideCustomerServiceWindow(context?.CustomerLastSeenAt))
@@ -77,7 +77,7 @@ public class WhatsAppMessageSender
                 context?.CustomerLastSeenAt,
                 phoneNumberId,
                 request.GetType().Name);
-            return;
+            return new OutboundSendResult(OutboundSendOutcome.SkippedOutsideCustomerServiceWindow);
         }
 
         var token = Environment.GetEnvironmentVariable("WHATSAPP_ACCESS_TOKEN") ?? string.Empty;
@@ -115,7 +115,7 @@ public class WhatsAppMessageSender
                         responseBody);
                 }
 
-                return;
+                return new OutboundSendResult(OutboundSendOutcome.Failed);
             }
 
             var metaResponse = JsonSerializer.Deserialize<WhatsAppSendResponse>(responseBody);
@@ -128,7 +128,20 @@ public class WhatsAppMessageSender
                     context?.WaUserId,
                     phoneNumberId,
                     responseBody);
+
+                return new OutboundSendResult(OutboundSendOutcome.Failed);
             }
+
+            _logger.LogInformation(
+                "WhatsApp outbound send succeeded. tenant_id={tenantId}, customer_id={customerId}, wa_user_id={waUserId}, phone_number_id={phoneNumberId}, message_id={messageId}, request_type={requestType}",
+                context?.TenantId,
+                context?.CustomerId,
+                context?.WaUserId,
+                phoneNumberId,
+                metaResponse.Messages[0].Id,
+                request.GetType().Name);
+
+            return new OutboundSendResult(OutboundSendOutcome.Sent);
         }
         catch (Exception ex)
         {
@@ -139,6 +152,8 @@ public class WhatsAppMessageSender
                 context?.CustomerId,
                 context?.WaUserId,
                 phoneNumberId);
+
+            return new OutboundSendResult(OutboundSendOutcome.Failed);
         }
     }
 
@@ -163,6 +178,18 @@ public class WhatsAppMessageSender
             _onDispose();
         }
     }
+}
+
+public enum OutboundSendOutcome
+{
+    Sent = 1,
+    SkippedOutsideCustomerServiceWindow = 2,
+    Failed = 3
+}
+
+public readonly record struct OutboundSendResult(OutboundSendOutcome Outcome)
+{
+    public bool IsSent => Outcome == OutboundSendOutcome.Sent;
 }
 
 public record WhatsAppTextRequest(
