@@ -751,7 +751,7 @@ public class ConversationStateRepository
     {
         const string sql = """
             delete from conversation_states
-            where expires_at < @now_utc
+            where expires_at <= @now_utc
             """;
 
         await using var conn = new NpgsqlConnection(_connectionString);
