@@ -1,2 +1,50 @@
 @page "/"
+@page "/login"
+@inject AdminSession Session
+@inject NavigationManager Nav
+
 <h3>Login</h3>
+
+@if (!string.IsNullOrWhiteSpace(_error))
+{
+    <p style="color:red">@_error</p>
+}
+
+<div>
+    <label>Email</label><br />
+    <input @bind="_email" type="email" />
+</div>
+<div>
+    <label>Password</label><br />
+    <input @bind="_password" type="password" />
+</div>
+<button @onclick="LoginAsync">Login</button>
+<a href="/register" style="margin-left:10px">Register</a>
+
+@code {
+    private string _email = string.Empty;
+    private string _password = string.Empty;
+    private string _error = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Session.InitializeAsync();
+        if (Session.IsAuthenticated)
+        {
+            Nav.NavigateTo("/dashboard", true);
+        }
+    }
+
+    private async Task LoginAsync()
+    {
+        _error = string.Empty;
+        var ok = await Session.LoginAsync(_email.Trim(), _password);
+        if (!ok)
+        {
+            _error = "Login failed.";
+            return;
+        }
+
+        Nav.NavigateTo("/dashboard", true);
+    }
+}

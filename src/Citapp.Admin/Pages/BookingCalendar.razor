@@ -1,2 +1,195 @@
 @page "/bookingcalendar"
-<h3>BookingCalendar</h3>
+@page "/bookings"
+@inject AdminSession Session
+@inject IBookingRepository BookingRepository
+@inject ICustomerRepository CustomerRepository
+@inject IServiceRepository ServiceRepository
+@inject BotApiClient BotApiClient
+@inject NavigationManager Nav
+
+<h3>Bookings</h3>
+
+@if (!string.IsNullOrWhiteSpace(_error))
+{
+    <p style="color:red">@_error</p>
+}
+@if (!string.IsNullOrWhiteSpace(_message))
+{
+    <p>@_message</p>
+}
+
+<div class="row">
+    <label>From</label><input type="date" @bind="_fromText" />
+    <label>To</label><input type="date" @bind="_toText" />
+    <label>Status</label>
+    <select @bind="_statusText">
+        <option value="">All</option>
+        <option value="Booked">Booked</option>
+        <option value="Completed">Completed</option>
+        <option value="Cancelled">Cancelled</option>
+        <option value="NoShow">NoShow</option>
+    </select>
+    <button @onclick="LoadBookingsAsync">Apply</button>
+</div>
+
+<table>
+    <thead><tr><th>Date</th><th>Start</th><th>Status</th><th>CustomerId</th><th>ServiceId</th></tr></thead>
+    <tbody>
+    @foreach (var booking in _bookings)
+    {
+        <tr>
+            <td>@booking.Date</td>
+            <td>@booking.StartAt.LocalDateTime</td>
+            <td>@booking.Status</td>
+            <td>@booking.CustomerId</td>
+            <td>@booking.ServiceId</td>
+        </tr>
+    }
+    </tbody>
+</table>
+
+<h4>Manual booking</h4>
+<div class="row">
+    <input @bind="_customerSearch" placeholder="Find customer" />
+    <button @onclick="SearchCustomersAsync">Search</button>
+    <select @bind="_selectedCustomerId">
+        <option value="">Select customer</option>
+        @foreach (var c in _customerOptions)
+        {
+            <option value="@c.Id">@c.DisplayName (@c.WaUserId)</option>
+        }
+    </select>
+</div>
+<div class="row">
+    <select @bind="_selectedServiceId">
+        <option value="">Select service</option>
+        @foreach (var s in _serviceOptions)
+        {
+            <option value="@s.Id">@s.Name (@s.DurationMinutes min)</option>
+        }
+    </select>
+    <input type="date" @bind="_slotDateText" />
+    <button @onclick="LoadSlotsAsync">Load slots (BotApi)</button>
+</div>
+<div class="row">
+    <select @bind="_selectedSlotStart">
+        <option value="">Select slot</option>
+        @foreach (var slot in _slots)
+        {
+            <option value="@slot.StartAt">@slot.Label</option>
+        }
+    </select>
+    <button @onclick="CreateBookingAsync">Create booking</button>
+</div>
+
+@code {
+    private string _fromText = DateTime.UtcNow.Date.ToString("yyyy-MM-dd");
+    private string _toText = DateTime.UtcNow.Date.AddDays(14).ToString("yyyy-MM-dd");
+    private string _statusText = string.Empty;
+    private List<BookingDto> _bookings = new();
+
+    private string _customerSearch = string.Empty;
+    private List<CustomerDto> _customerOptions = new();
+    private List<ServiceDto> _serviceOptions = new();
+    private string _selectedCustomerId = string.Empty;
+    private string _selectedServiceId = string.Empty;
+    private string _slotDateText = DateTime.UtcNow.Date.ToString("yyyy-MM-dd");
+    private List<TimeSlotVm> _slots = new();
+    private string _selectedSlotStart = string.Empty;
+
+    private string _error = string.Empty;
+    private string _message = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Session.InitializeAsync();
+        if (!Session.IsAuthenticated || Session.TenantId is null)
+        {
+            Nav.NavigateTo("/login", true);
+            return;
+        }
+
+        _serviceOptions = await ServiceRepository.GetAllAsync(Session.TenantId.Value);
+        await LoadBookingsAsync();
+    }
+
+    private async Task LoadBookingsAsync()
+    {
+        _error = string.Empty;
+        BookingStatus? status = null;
+        if (Enum.TryParse<BookingStatus>(_statusText, true, out var parsed))
+        {
+            status = parsed;
+        }
+
+        _bookings = await BookingRepository.GetForRangeAsync(
+            Session.TenantId!.Value,
+            DateOnly.Parse(_fromText),
+            DateOnly.Parse(_toText),
+            status);
+    }
+
+    private async Task SearchCustomersAsync()
+    {
+        _customerOptions = await CustomerRepository.SearchAsync(Session.TenantId!.Value, _customerSearch);
+    }
+
+    private async Task LoadSlotsAsync()
+    {
+        _error = string.Empty;
+        _slots.Clear();
+        _selectedSlotStart = string.Empty;
+
+        if (!Guid.TryParse(_selectedServiceId, out var serviceId))
+        {
+            _error = "Select a service first.";
+            return;
+        }
+
+        _slots = await BotApiClient.GetSlotsAsync(serviceId, DateOnly.Parse(_slotDateText));
+    }
+
+    private async Task CreateBookingAsync()
+    {
+        _error = string.Empty;
+        _message = string.Empty;
+
+        if (!Guid.TryParse(_selectedCustomerId, out var customerId)
+            || !Guid.TryParse(_selectedServiceId, out var serviceId)
+            || !DateTimeOffset.TryParse(_selectedSlotStart, out var startAt))
+        {
+            _error = "Select customer, service, and slot.";
+            return;
+        }
+
+        var service = _serviceOptions.FirstOrDefault(x => x.Id == serviceId);
+        var slot = _slots.FirstOrDefault(x => x.StartAt == startAt);
+        if (service is null || slot is null)
+        {
+            _error = "Could not resolve service or slot.";
+            return;
+        }
+
+        var dto = new CreateBookingDto(
+            customerId,
+            serviceId,
+            BookingSource.Admin,
+            DateOnly.FromDateTime(slot.StartAt.Date),
+            slot.StartAt,
+            slot.EndAt,
+            service.DurationMinutes,
+            service.PriceAmount,
+            service.Currency);
+
+        try
+        {
+            await BotApiClient.CreateBookingAsync(dto);
+            _message = "Booking created.";
+            await LoadBookingsAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+}

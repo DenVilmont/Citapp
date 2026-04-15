@@ -1,2 +1,53 @@
 @page "/register"
+@inject AdminSession Session
+@inject NavigationManager Nav
+
 <h3>Register</h3>
+
+@if (!string.IsNullOrWhiteSpace(_message))
+{
+    <p>@_message</p>
+}
+@if (!string.IsNullOrWhiteSpace(_error))
+{
+    <p style="color:red">@_error</p>
+}
+
+<div>
+    <label>Email</label><br />
+    <input @bind="_email" type="email" />
+</div>
+<div>
+    <label>Password</label><br />
+    <input @bind="_password" type="password" />
+</div>
+<div>
+    <label>Display name</label><br />
+    <input @bind="_displayName" />
+</div>
+<button @onclick="RegisterAsync">Create account</button>
+<a href="/login" style="margin-left:10px">Back to login</a>
+
+@code {
+    private string _email = string.Empty;
+    private string _password = string.Empty;
+    private string _displayName = string.Empty;
+    private string _error = string.Empty;
+    private string _message = string.Empty;
+
+    private async Task RegisterAsync()
+    {
+        _error = string.Empty;
+        _message = string.Empty;
+
+        var ok = await Session.RegisterAsync(_email.Trim(), _password, _displayName.Trim());
+        if (!ok)
+        {
+            _error = "Registration failed. If email verification is enabled, verify then login.";
+            return;
+        }
+
+        _message = "Registration successful.";
+        Nav.NavigateTo("/dashboard", true);
+    }
+}

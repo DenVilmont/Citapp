@@ -1,2 +1,8 @@
 @page "/customercard"
-<h3>CustomerCard</h3>
+@inject NavigationManager Nav
+
+<p>Use Customers page.</p>
+
+@code {
+    protected override void OnInitialized() => Nav.NavigateTo("/customerlist", true);
+}

@@ -1,2 +1,71 @@
 @page "/customerlist"
-<h3>CustomerList</h3>
+@page "/customers"
+@inject AdminSession Session
+@inject ICustomerRepository CustomerRepository
+@inject NavigationManager Nav
+
+<h3>Customers</h3>
+
+<div class="row">
+    <input @bind="_query" placeholder="Search by name, WA user id, phone" />
+    <button @onclick="LoadAsync">Search</button>
+</div>
+
+@if (!string.IsNullOrWhiteSpace(_message))
+{
+    <p>@_message</p>
+}
+
+<table>
+    <thead><tr><th>Name</th><th>WA user</th><th>Phone</th><th>Last seen</th><th>Note</th></tr></thead>
+    <tbody>
+    @foreach (var c in _customers)
+    {
+        <tr>
+            <td>@c.DisplayName</td>
+            <td>@c.WaUserId</td>
+            <td>@c.Phone</td>
+            <td>@c.LastSeenAt</td>
+            <td>
+                <textarea @bind="_notes[c.Id]"></textarea>
+                <button @onclick="() => SaveNoteAsync(c.Id)">Save note</button>
+            </td>
+        </tr>
+    }
+    </tbody>
+</table>
+
+@code {
+    private string _query = string.Empty;
+    private List<CustomerDto> _customers = new();
+    private readonly Dictionary<Guid, string> _notes = new();
+    private string _message = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Session.InitializeAsync();
+        if (!Session.IsAuthenticated || Session.TenantId is null)
+        {
+            Nav.NavigateTo("/login", true);
+            return;
+        }
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _customers = await CustomerRepository.SearchAsync(Session.TenantId!.Value, _query);
+        _notes.Clear();
+        foreach (var c in _customers)
+        {
+            _notes[c.Id] = c.MasterNote ?? string.Empty;
+        }
+    }
+
+    private async Task SaveNoteAsync(Guid customerId)
+    {
+        await CustomerRepository.UpdateNoteAsync(customerId, Session.TenantId!.Value, _notes[customerId]);
+        _message = "Note updated.";
+    }
+}
