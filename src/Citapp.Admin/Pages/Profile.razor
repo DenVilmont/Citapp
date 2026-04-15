@@ -1,7 +1,6 @@
 @page "/profile"
 @inject AdminSession Session
-@inject IProfileRepository ProfileRepository
-@inject ITenantRepository TenantRepository
+@inject ProfilePageService ProfilePageService
 @inject NavigationManager Nav
 
 <h3>Profile</h3>
@@ -65,22 +64,17 @@ else
             return;
         }
 
-        var profile = await ProfileRepository.GetAsync(Session.UserId.Value);
-        var tenant = await TenantRepository.GetAsync(Session.TenantId.Value);
-        _email = profile?.Email ?? Session.Email;
-        _displayName = profile?.DisplayName ?? string.Empty;
-
-        if (tenant is not null)
-        {
-            _businessName = tenant.BusinessName;
-            _aboutText = tenant.AboutText ?? string.Empty;
-            _greetingText = tenant.GreetingText;
-            _timezone = tenant.Timezone;
-            _currency = tenant.Currency;
-            _slotStep = tenant.SlotStepMinutes;
-            _buffer = tenant.DefaultBufferMinutes;
-            _bookingEnabled = tenant.BookingEnabled;
-        }
+        var state = await ProfilePageService.LoadAsync(Session.UserId.Value, Session.TenantId.Value, Session.Email);
+        _email = state.Email;
+        _displayName = state.DisplayName;
+        _businessName = state.BusinessName;
+        _aboutText = state.AboutText;
+        _greetingText = state.GreetingText;
+        _timezone = state.Timezone;
+        _currency = state.Currency;
+        _slotStep = state.SlotStep;
+        _buffer = state.Buffer;
+        _bookingEnabled = state.BookingEnabled;
 
         _loading = false;
     }
@@ -91,31 +85,28 @@ else
 
         _message = string.Empty;
         _error = string.Empty;
-        var validationError = ValidateProfile();
-        if (validationError is not null)
-        {
-            _error = validationError;
-            return;
-        }
 
         try
         {
-            await ProfileRepository.UpsertAsync(new ProfileDto(Session.UserId.Value, _email, _displayName, DateTimeOffset.UtcNow));
+            var error = await ProfilePageService.SaveAsync(
+                Session.UserId.Value,
+                Session.TenantId.Value,
+                new ProfilePageState(
+                    _email,
+                    _displayName,
+                    _businessName,
+                    _aboutText,
+                    _greetingText,
+                    _timezone,
+                    _currency,
+                    _slotStep,
+                    _buffer,
+                    _bookingEnabled));
 
-            var existing = await TenantRepository.GetAsync(Session.TenantId.Value);
-            if (existing is not null)
+            if (error is not null)
             {
-                await TenantRepository.UpdateAsync(existing.Id, existing with
-                {
-                    BusinessName = _businessName,
-                    AboutText = _aboutText,
-                    GreetingText = _greetingText,
-                    Timezone = _timezone,
-                    Currency = _currency.Trim().ToUpperInvariant(),
-                    SlotStepMinutes = _slotStep,
-                    DefaultBufferMinutes = _buffer,
-                    BookingEnabled = _bookingEnabled
-                });
+                _error = error;
+                return;
             }
 
             _message = "Saved.";
@@ -123,61 +114,6 @@ else
         catch (Exception ex)
         {
             _error = ex.Message;
-        }
-    }
-
-    private string? ValidateProfile()
-    {
-        if (string.IsNullOrWhiteSpace(_businessName))
-        {
-            return "Business name is required.";
-        }
-
-        if (string.IsNullOrWhiteSpace(_greetingText))
-        {
-            return "Greeting text is required.";
-        }
-
-        if (!IsValidCurrency(_currency))
-        {
-            return "Use a valid 3-letter currency code.";
-        }
-
-        if (!IsValidTimeZone(_timezone))
-        {
-            return "Timezone is invalid.";
-        }
-
-        if (_slotStep <= 0 || _slotStep > 120)
-        {
-            return "Slot step must be between 1 and 120.";
-        }
-
-        if (_buffer < 0 || _buffer > 240)
-        {
-            return "Buffer must be between 0 and 240.";
-        }
-
-        return null;
-    }
-
-    private static bool IsValidCurrency(string value)
-        => value.Trim().Length == 3 && value.Trim().All(char.IsAsciiLetter);
-
-    private static bool IsValidTimeZone(string value)
-    {
-        try
-        {
-            _ = TimeZoneInfo.FindSystemTimeZoneById(value);
-            return true;
-        }
-        catch (TimeZoneNotFoundException)
-        {
-            return false;
-        }
-        catch (InvalidTimeZoneException)
-        {
-            return false;
         }
     }
 }

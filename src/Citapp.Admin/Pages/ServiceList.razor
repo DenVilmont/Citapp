@@ -2,7 +2,7 @@
 @page "/services"
 @using Microsoft.AspNetCore.Components.Forms
 @inject AdminSession Session
-@inject IServiceRepository ServiceRepository
+@inject ServicePageService ServicePageService
 @inject NavigationManager Nav
 
 <h3>Services</h3>
@@ -106,13 +106,14 @@
 
     private async Task ReloadAsync()
     {
+        var pageData = await ServicePageService.LoadAsync(Session.TenantId!.Value);
         _services.Clear();
-        _mediaByServiceId.Clear();
+        _services.AddRange(pageData.Services);
 
-        _services.AddRange(await ServiceRepository.GetAllAsync(Session.TenantId!.Value));
-        foreach (var service in _services)
+        _mediaByServiceId.Clear();
+        foreach (var (serviceId, media) in pageData.MediaByServiceId)
         {
-            _mediaByServiceId[service.Id] = await ServiceRepository.GetMediaByServiceAsync(Session.TenantId.Value, service.Id);
+            _mediaByServiceId[serviceId] = media;
         }
     }
 
@@ -120,38 +121,26 @@
     {
         _error = string.Empty;
         _message = string.Empty;
-        var validationError = ValidateService();
-        if (validationError is not null)
-        {
-            _error = validationError;
-            return;
-        }
 
         try
         {
-            var sortOrder = _editingId is null ? _services.Count : _services.First(x => x.Id == _editingId.Value).SortOrder;
-            var dto = new ServiceDto(
-                _editingId ?? Guid.Empty,
+            var currentSortOrder = _editingId is null
+                ? (int?)null
+                : _services.FirstOrDefault(x => x.Id == _editingId.Value)?.SortOrder;
+
+            var error = await ServicePageService.SaveAsync(
                 Session.TenantId!.Value,
-                _name.Trim(),
-                string.IsNullOrWhiteSpace(_description) ? null : _description.Trim(),
-                _duration,
-                _price,
-                _currency.Trim().ToUpperInvariant(),
-                _isActive,
-                sortOrder,
-                DateTimeOffset.UtcNow);
-            if (_editingId is null)
+                new ServiceEditState(_editingId, _name, _description, _duration, _price, _currency, _isActive),
+                _services.Count,
+                currentSortOrder);
+
+            if (error is not null)
             {
-                await ServiceRepository.CreateAsync(dto, Session.TenantId.Value);
-                _message = "Service created.";
-            }
-            else
-            {
-                await ServiceRepository.UpdateAsync(_editingId.Value, dto, Session.TenantId.Value);
-                _message = "Service updated.";
+                _error = error;
+                return;
             }
 
+            _message = _editingId is null ? "Service created." : "Service updated.";
             ResetForm();
             await ReloadAsync();
         }
@@ -174,12 +163,11 @@
 
     private async Task ToggleActiveAsync(ServiceDto service)
     {
-        await ServiceRepository.SetActiveAsync(service.Id, Session.TenantId!.Value, !service.IsActive);
+        await ServicePageService.ToggleActiveAsync(Session.TenantId!.Value, service.Id, !service.IsActive);
         await ReloadAsync();
     }
 
     private void StartDrag(Guid serviceId) => _draggedServiceId = serviceId;
-
 
     private async Task DropOnServiceAsync(Guid targetServiceId)
     {
@@ -205,43 +193,34 @@
         _services.Insert(targetIndex, moved);
         _draggedServiceId = null;
 
-        await ServiceRepository.UpdateSortOrdersAsync(Session.TenantId!.Value, _services.Select(x => x.Id).ToList());
+        await ServicePageService.UpdateSortOrdersAsync(Session.TenantId!.Value, _services.Select(x => x.Id).ToList());
         await ReloadAsync();
     }
 
     private async Task UploadMediaAsync(Guid serviceId, InputFileChangeEventArgs e)
     {
         _error = string.Empty;
-        var file = e.File;
-        if (file is null)
+        var error = await ServicePageService.UploadMediaAsync(Session.TenantId!.Value, serviceId, e.File, Session.AccessToken);
+        if (error is not null)
         {
+            _error = error;
             return;
         }
 
-        if (!file.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
-        {
-            _error = "Only image files are supported.";
-            return;
-        }
-
-        await using var stream = file.OpenReadStream(5 * 1024 * 1024);
-        using var ms = new MemoryStream();
-        await stream.CopyToAsync(ms);
-        await ServiceRepository.UploadMediaAsync(Session.TenantId!.Value, serviceId, file.Name, file.ContentType, ms.ToArray(), Session.AccessToken);
         _message = "Image uploaded.";
-        _mediaByServiceId[serviceId] = await ServiceRepository.GetMediaByServiceAsync(Session.TenantId.Value, serviceId);
+        _mediaByServiceId[serviceId] = await ServicePageService.GetMediaAsync(Session.TenantId.Value, serviceId);
     }
 
     private async Task SetPrimaryAsync(Guid serviceId, Guid mediaId)
     {
-        await ServiceRepository.SetPrimaryMediaAsync(Session.TenantId!.Value, serviceId, mediaId);
-        _mediaByServiceId[serviceId] = await ServiceRepository.GetMediaByServiceAsync(Session.TenantId.Value, serviceId);
+        await ServicePageService.SetPrimaryAsync(Session.TenantId!.Value, serviceId, mediaId);
+        _mediaByServiceId[serviceId] = await ServicePageService.GetMediaAsync(Session.TenantId.Value, serviceId);
     }
 
     private async Task DeleteMediaAsync(Guid serviceId, Guid mediaId)
     {
-        await ServiceRepository.DeleteMediaAsync(Session.TenantId!.Value, serviceId, mediaId, Session.AccessToken);
-        _mediaByServiceId[serviceId] = await ServiceRepository.GetMediaByServiceAsync(Session.TenantId.Value, serviceId);
+        await ServicePageService.DeleteMediaAsync(Session.TenantId!.Value, serviceId, mediaId, Session.AccessToken);
+        _mediaByServiceId[serviceId] = await ServicePageService.GetMediaAsync(Session.TenantId.Value, serviceId);
     }
 
     private List<ServiceMediaDto> GetMedia(Guid serviceId)
@@ -257,32 +236,4 @@
         _currency = "EUR";
         _isActive = true;
     }
-
-    private string? ValidateService()
-    {
-        if (string.IsNullOrWhiteSpace(_name))
-        {
-            return "Name is required.";
-        }
-
-        if (_duration <= 0 || _duration > 480)
-        {
-            return "Duration must be between 1 and 480.";
-        }
-
-        if (_price < 0)
-        {
-            return "Price cannot be negative.";
-        }
-
-        if (!IsValidCurrency(_currency))
-        {
-            return "Use a valid 3-letter currency code.";
-        }
-
-        return null;
-    }
-
-    private static bool IsValidCurrency(string value)
-        => value.Trim().Length == 3 && value.Trim().All(char.IsAsciiLetter);
 }

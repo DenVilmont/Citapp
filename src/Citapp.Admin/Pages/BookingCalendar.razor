@@ -1,11 +1,7 @@
 @page "/bookingcalendar"
 @page "/bookings"
 @inject AdminSession Session
-@inject IBookingRepository BookingRepository
-@inject ICustomerRepository CustomerRepository
-@inject IServiceRepository ServiceRepository
-@inject ITenantRepository TenantRepository
-@inject BotApiClient BotApiClient
+@inject BookingPageService BookingPageService
 @inject NavigationManager Nav
 
 <h3>Bookings</h3>
@@ -146,59 +142,27 @@
             return;
         }
 
-        var tenant = await TenantRepository.GetAsync(Session.TenantId.Value);
-        _tenantTimeZone = ResolveTimeZone(tenant?.Timezone);
-
-        var allServices = await ServiceRepository.GetAllAsync(Session.TenantId.Value);
-        _activeServiceOptions = allServices.Where(x => x.IsActive).OrderBy(x => x.SortOrder).ToList();
+        var initData = await BookingPageService.LoadInitAsync(Session.TenantId.Value);
+        _tenantTimeZone = initData.TenantTimeZone;
+        _activeServiceOptions = initData.ActiveServices;
         await LoadBookingsAsync();
     }
 
     private async Task LoadBookingsAsync()
     {
         _error = string.Empty;
-        BookingStatus? status = null;
-        if (Enum.TryParse<BookingStatus>(_statusText, true, out var parsed))
-        {
-            status = parsed;
-        }
+        var data = await BookingPageService.LoadBookingsAsync(Session.TenantId!.Value, _fromText, _toText, _statusText);
 
-        _bookings = await BookingRepository.GetForRangeAsync(
-            Session.TenantId!.Value,
-            DateOnly.Parse(_fromText),
-            DateOnly.Parse(_toText),
-            status);
-
-        await LoadLookupLabelsAsync();
-    }
-
-    private async Task LoadLookupLabelsAsync()
-    {
+        _bookings = data.Bookings;
         _customerLabels.Clear();
         _serviceLabels.Clear();
-
-        var customerIds = _bookings.Select(x => x.CustomerId).Distinct().ToList();
-        var serviceIds = _bookings.Select(x => x.ServiceId).Distinct().ToList();
-
-        var customers = await CustomerRepository.GetByIdsAsync(Session.TenantId!.Value, customerIds);
-        var services = await ServiceRepository.GetByIdsAsync(Session.TenantId!.Value, serviceIds);
-
-        foreach (var c in customers)
-        {
-            _customerLabels[c.Id] = string.IsNullOrWhiteSpace(c.Phone)
-                ? $"{c.DisplayName} ({c.WaUserId})"
-                : $"{c.DisplayName} ({c.Phone})";
-        }
-
-        foreach (var s in services)
-        {
-            _serviceLabels[s.Id] = s.Name;
-        }
+        foreach (var (id, label) in data.CustomerLabels) _customerLabels[id] = label;
+        foreach (var (id, label) in data.ServiceLabels) _serviceLabels[id] = label;
     }
 
     private async Task SearchCustomersAsync()
     {
-        _customerOptions = await CustomerRepository.SearchAsync(Session.TenantId!.Value, _customerSearch);
+        _customerOptions = await BookingPageService.SearchCustomersAsync(Session.TenantId!.Value, _customerSearch);
     }
 
     private async Task CreateManualCustomerAsync()
@@ -206,22 +170,22 @@
         _error = string.Empty;
         _message = string.Empty;
 
-        if (string.IsNullOrWhiteSpace(_newCustomerDisplayName))
+        var (customer, error) = await BookingPageService.CreateManualCustomerAsync(
+            Session.TenantId!.Value,
+            _newCustomerDisplayName,
+            _newCustomerPhone);
+
+        if (error is not null)
         {
-            _error = "Display name is required for a new customer.";
+            _error = error;
             return;
         }
 
-        var created = await CustomerRepository.CreateManualAsync(
-            Session.TenantId!.Value,
-            _newCustomerDisplayName.Trim(),
-            _newCustomerPhone);
-
-        _customerOptions.Insert(0, created);
-        _selectedCustomerId = created.Id.ToString();
+        _customerOptions.Insert(0, customer!);
+        _selectedCustomerId = customer!.Id.ToString();
         _newCustomerDisplayName = string.Empty;
         _newCustomerPhone = string.Empty;
-        _message = $"Customer created ({created.DisplayName}).";
+        _message = $"Customer created ({customer.DisplayName}).";
     }
 
     private async Task LoadSlotsAsync()
@@ -230,13 +194,15 @@
         _slots.Clear();
         _selectedSlotStart = string.Empty;
 
-        if (!Guid.TryParse(_selectedServiceId, out var serviceId))
+        var serviceId = Guid.TryParse(_selectedServiceId, out var parsed) ? parsed : Guid.Empty;
+        var (slots, error) = await BookingPageService.LoadSlotsAsync(serviceId, _slotDateText);
+        if (error is not null)
         {
-            _error = "Select a service first.";
+            _error = error;
             return;
         }
 
-        _slots = await BotApiClient.GetSlotsAsync(serviceId, DateOnly.Parse(_slotDateText));
+        _slots = slots;
     }
 
     private async Task CreateBookingAsync()
@@ -244,36 +210,20 @@
         _error = string.Empty;
         _message = string.Empty;
 
-        if (!Guid.TryParse(_selectedCustomerId, out var customerId)
-            || !Guid.TryParse(_selectedServiceId, out var serviceId)
-            || !DateTimeOffset.TryParse(_selectedSlotStart, out var startAt))
-        {
-            _error = "Select customer, service, and slot.";
-            return;
-        }
-
-        var service = _activeServiceOptions.FirstOrDefault(x => x.Id == serviceId);
-        var slot = _slots.FirstOrDefault(x => x.StartAt == startAt);
-        if (service is null || slot is null)
-        {
-            _error = "Could not resolve service or slot.";
-            return;
-        }
-
-        var dto = new CreateBookingDto(
-            customerId,
-            serviceId,
-            BookingSource.Admin,
-            DateOnly.FromDateTime(slot.StartAt.Date),
-            slot.StartAt,
-            slot.EndAt,
-            service.DurationMinutes,
-            service.PriceAmount,
-            service.Currency);
+        var input = new BookingCreateInput(
+            Guid.TryParse(_selectedCustomerId, out var customerId) ? customerId : Guid.Empty,
+            Guid.TryParse(_selectedServiceId, out var serviceId) ? serviceId : Guid.Empty,
+            DateTimeOffset.TryParse(_selectedSlotStart, out var startAt) ? startAt : default);
 
         try
         {
-            await BotApiClient.CreateBookingAsync(dto);
+            var error = await BookingPageService.CreateBookingAsync(input, _activeServiceOptions, _slots);
+            if (error is not null)
+            {
+                _error = error;
+                return;
+            }
+
             _message = "Booking created.";
             await LoadBookingsAsync();
         }
@@ -295,27 +245,6 @@
     private string FormatTimeRange(DateTimeOffset start, DateTimeOffset end)
         => $"{FormatDateTime(start):HH:mm} - {FormatDateTime(end):HH:mm}";
 
-    private static TimeZoneInfo ResolveTimeZone(string? timezone)
-    {
-        if (string.IsNullOrWhiteSpace(timezone))
-        {
-            return TimeZoneInfo.Utc;
-        }
-
-        try
-        {
-            return TimeZoneInfo.FindSystemTimeZoneById(timezone);
-        }
-        catch (TimeZoneNotFoundException)
-        {
-            return TimeZoneInfo.Utc;
-        }
-        catch (InvalidTimeZoneException)
-        {
-            return TimeZoneInfo.Utc;
-        }
-    }
-
     private void OpenCustomerCard(Guid customerId)
         => Nav.NavigateTo($"/customercard/{customerId}");
 
@@ -326,7 +255,7 @@
 
         try
         {
-            await BotApiClient.UpdateBookingStatusAsync(bookingId, status);
+            await BookingPageService.UpdateStatusAsync(bookingId, status);
             _message = $"Booking updated to {status}.";
             await LoadBookingsAsync();
         }

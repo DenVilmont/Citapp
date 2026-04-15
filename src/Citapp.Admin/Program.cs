@@ -34,6 +34,11 @@ builder.Services.AddHttpClient("BotApi", c => c.BaseAddress = new Uri(botApiBase
 
 builder.Services.AddScoped<AdminSession>();
 builder.Services.AddScoped<BotApiClient>();
+builder.Services.AddScoped<ProfilePageService>();
+builder.Services.AddScoped<ServicePageService>();
+builder.Services.AddScoped<SchedulePageService>();
+builder.Services.AddScoped<BookingPageService>();
+builder.Services.AddScoped<CustomerPageService>();
 
 builder.Services.AddScoped<IServiceRepository, ServiceRepository>();
 builder.Services.AddScoped<IBookingRepository, BookingRepository>();
