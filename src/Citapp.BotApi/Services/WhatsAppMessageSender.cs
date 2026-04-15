@@ -1,17 +1,27 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading;
 
 namespace Citapp.BotApi.Services;
 
 public class WhatsAppMessageSender
 {
+    private static readonly TimeSpan CustomerServiceWindow = TimeSpan.FromHours(24);
+    private static readonly AsyncLocal<OutboundSendContext?> SendContext = new();
     private readonly HttpClient _http;
     private readonly ILogger<WhatsAppMessageSender> _logger;
     public WhatsAppMessageSender(HttpClient http, ILogger<WhatsAppMessageSender> logger)
     {
         _http = http;
         _logger = logger;
+    }
+
+    public IDisposable BeginOutboundScope(Guid tenantId, Guid customerId, string waUserId, DateTimeOffset? customerLastSeenAt)
+    {
+        var previousContext = SendContext.Value;
+        SendContext.Value = new OutboundSendContext(tenantId, customerId, waUserId, customerLastSeenAt);
+        return new Scope(() => SendContext.Value = previousContext);
     }
 
     public Task SendTextAsync(string to, string phoneNumberId, string text)
@@ -56,29 +66,101 @@ public class WhatsAppMessageSender
 
     private async Task SendAsync(string phoneNumberId, object request)
     {
-        var token = Environment.GetEnvironmentVariable("WHATSAPP_ACCESS_TOKEN") ?? string.Empty;
-        _http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-        var response = await _http.PostAsJsonAsync($"https://graph.facebook.com/v19.0/{phoneNumberId}/messages", request);
-        var responseBody = await response.Content.ReadAsStringAsync();
-
-        if (!response.IsSuccessStatusCode)
+        var context = SendContext.Value;
+        if (!IsInsideCustomerServiceWindow(context?.CustomerLastSeenAt))
         {
-            _logger.LogError(
-                "WhatsApp send failed for phone_number_id={phoneNumberId}. Status={statusCode}, Body={responseBody}",
+            _logger.LogWarning(
+                "Skipping WhatsApp outbound message outside customer service window. tenant_id={tenantId}, customer_id={customerId}, wa_user_id={waUserId}, last_seen_at={lastSeenAt}, phone_number_id={phoneNumberId}, request_type={requestType}",
+                context?.TenantId,
+                context?.CustomerId,
+                context?.WaUserId,
+                context?.CustomerLastSeenAt,
                 phoneNumberId,
-                (int)response.StatusCode,
-                responseBody);
-            response.EnsureSuccessStatusCode();
+                request.GetType().Name);
+            return;
         }
 
-        var metaResponse = JsonSerializer.Deserialize<WhatsAppSendResponse>(responseBody);
-        if (metaResponse?.Messages is null || metaResponse.Messages.Count == 0 || string.IsNullOrWhiteSpace(metaResponse.Messages[0].Id))
+        var token = Environment.GetEnvironmentVariable("WHATSAPP_ACCESS_TOKEN") ?? string.Empty;
+        _http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        try
+        {
+            var response = await _http.PostAsJsonAsync($"https://graph.facebook.com/v19.0/{phoneNumberId}/messages", request);
+            var responseBody = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var isRestrictionError = responseBody.Contains("24", StringComparison.OrdinalIgnoreCase)
+                    || responseBody.Contains("window", StringComparison.OrdinalIgnoreCase)
+                    || responseBody.Contains("policy", StringComparison.OrdinalIgnoreCase);
+                if (isRestrictionError)
+                {
+                    _logger.LogWarning(
+                        "WhatsApp outbound send rejected by Meta restriction. tenant_id={tenantId}, customer_id={customerId}, wa_user_id={waUserId}, phone_number_id={phoneNumberId}, status={statusCode}, body={responseBody}",
+                        context?.TenantId,
+                        context?.CustomerId,
+                        context?.WaUserId,
+                        phoneNumberId,
+                        (int)response.StatusCode,
+                        responseBody);
+                }
+                else
+                {
+                    _logger.LogError(
+                        "WhatsApp outbound send failed. tenant_id={tenantId}, customer_id={customerId}, wa_user_id={waUserId}, phone_number_id={phoneNumberId}, status={statusCode}, body={responseBody}",
+                        context?.TenantId,
+                        context?.CustomerId,
+                        context?.WaUserId,
+                        phoneNumberId,
+                        (int)response.StatusCode,
+                        responseBody);
+                }
+
+                return;
+            }
+
+            var metaResponse = JsonSerializer.Deserialize<WhatsAppSendResponse>(responseBody);
+            if (metaResponse?.Messages is null || metaResponse.Messages.Count == 0 || string.IsNullOrWhiteSpace(metaResponse.Messages[0].Id))
+            {
+                _logger.LogError(
+                    "WhatsApp send returned unexpected payload. tenant_id={tenantId}, customer_id={customerId}, wa_user_id={waUserId}, phone_number_id={phoneNumberId}, body={responseBody}",
+                    context?.TenantId,
+                    context?.CustomerId,
+                    context?.WaUserId,
+                    phoneNumberId,
+                    responseBody);
+            }
+        }
+        catch (Exception ex)
         {
             _logger.LogError(
-                "WhatsApp send returned unexpected payload for phone_number_id={phoneNumberId}. Body={responseBody}",
-                phoneNumberId,
-                responseBody);
-            throw new InvalidOperationException("WhatsApp send response was missing message id.");
+                ex,
+                "WhatsApp outbound send threw exception. tenant_id={tenantId}, customer_id={customerId}, wa_user_id={waUserId}, phone_number_id={phoneNumberId}",
+                context?.TenantId,
+                context?.CustomerId,
+                context?.WaUserId,
+                phoneNumberId);
+        }
+    }
+
+    private static bool IsInsideCustomerServiceWindow(DateTimeOffset? customerLastSeenAt)
+        => customerLastSeenAt.HasValue && DateTimeOffset.UtcNow - customerLastSeenAt.Value <= CustomerServiceWindow;
+
+    private sealed record OutboundSendContext(Guid TenantId, Guid CustomerId, string WaUserId, DateTimeOffset? CustomerLastSeenAt);
+
+    private sealed class Scope(Action onDispose) : IDisposable
+    {
+        private readonly Action _onDispose = onDispose;
+        private bool _disposed;
+
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+            _onDispose();
         }
     }
 }

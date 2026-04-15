@@ -110,11 +110,11 @@ public class WebhookProcessor
             var displayName = contact?.Profile?.Name ?? "Клиент";
             var customer = await _customers.GetOrCreateAsync(tenantId.Value, msg.From, displayName);
             await _customers.UpdateProfileAsync(customer.Id, tenantId.Value, contact?.Profile?.Name, msg.From);
-            await _customers.UpdateLastSeenAsync(customer.Id, tenantId.Value);
+            var lastSeenAt = await _customers.UpdateLastSeenAsync(customer.Id, tenantId.Value) ?? DateTimeOffset.UtcNow;
 
             var interactiveType = msg.Interactive?.Type;
             var payloadId = msg.Interactive?.ButtonReply?.Id ?? msg.Interactive?.ListReply?.Id;
-            await _fsm.HandleAsync(tenantId.Value, customer.Id, msg.From, phoneNumberId, msg.Type, interactiveType, payloadId, msg.Text?.Body);
+            await _fsm.HandleAsync(tenantId.Value, customer.Id, msg.From, phoneNumberId, lastSeenAt, msg.Type, interactiveType, payloadId, msg.Text?.Body);
             await _events.MarkProcessedAsync(eventId, true);
         }
         catch (Exception ex)
