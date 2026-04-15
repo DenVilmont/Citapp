@@ -17,7 +17,7 @@
 }
 
 <table>
-    <thead><tr><th>Name</th><th>WA user</th><th>Phone</th><th>Last seen</th><th>Note</th><th>Card</th></tr></thead>
+    <thead><tr><th>Name</th><th>WA user</th><th>Phone</th><th>Bookings</th><th>Last seen</th><th>Note</th><th>Card</th></tr></thead>
     <tbody>
     @foreach (var c in _customers)
     {
@@ -25,6 +25,7 @@
             <td>@c.DisplayName</td>
             <td>@c.WaUserId</td>
             <td>@c.Phone</td>
+            <td>@c.BookingCount</td>
             <td>@c.LastSeenAt</td>
             <td>
                 <textarea @bind="_notes[c.Id]"></textarea>

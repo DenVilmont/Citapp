@@ -9,6 +9,10 @@
 {
     <p style="color:red">@_error</p>
 }
+@if (!string.IsNullOrWhiteSpace(_message))
+{
+    <p>@_message</p>
+}
 
 <div>
     <label>Email</label><br />
@@ -19,12 +23,14 @@
     <input @bind="_password" type="password" />
 </div>
 <button @onclick="LoginAsync">Login</button>
+<button @onclick="SendMagicLinkAsync" style="margin-left:10px">Send magic link</button>
 <a href="/register" style="margin-left:10px">Register</a>
 
 @code {
     private string _email = string.Empty;
     private string _password = string.Empty;
     private string _error = string.Empty;
+    private string _message = string.Empty;
 
     protected override async Task OnInitializedAsync()
     {
@@ -38,6 +44,7 @@
     private async Task LoginAsync()
     {
         _error = string.Empty;
+        _message = string.Empty;
         var ok = await Session.LoginAsync(_email.Trim(), _password);
         if (!ok)
         {
@@ -46,5 +53,25 @@
         }
 
         Nav.NavigateTo("/dashboard", true);
+    }
+
+    private async Task SendMagicLinkAsync()
+    {
+        _error = string.Empty;
+        _message = string.Empty;
+        if (string.IsNullOrWhiteSpace(_email))
+        {
+            _error = "Email is required.";
+            return;
+        }
+
+        var ok = await Session.SendMagicLinkAsync(_email.Trim());
+        if (!ok)
+        {
+            _error = "Could not send magic link.";
+            return;
+        }
+
+        _message = "Magic link sent. Check your email.";
     }
 }

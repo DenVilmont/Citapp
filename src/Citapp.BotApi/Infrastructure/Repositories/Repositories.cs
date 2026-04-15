@@ -227,7 +227,8 @@ public class CustomerRepository
             row.GetString(4),
             row.IsDBNull(5) ? null : row.GetString(5),
             row.GetFieldValue<DateTimeOffset>(6),
-            row.IsDBNull(7) ? null : row.GetFieldValue<DateTimeOffset>(7));
+            row.IsDBNull(7) ? null : row.GetFieldValue<DateTimeOffset>(7),
+            0);
     }
 }
 

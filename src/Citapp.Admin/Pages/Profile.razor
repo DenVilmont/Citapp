@@ -91,6 +91,12 @@ else
 
         _message = string.Empty;
         _error = string.Empty;
+        var validationError = ValidateProfile();
+        if (validationError is not null)
+        {
+            _error = validationError;
+            return;
+        }
 
         try
         {
@@ -105,7 +111,7 @@ else
                     AboutText = _aboutText,
                     GreetingText = _greetingText,
                     Timezone = _timezone,
-                    Currency = _currency,
+                    Currency = _currency.Trim().ToUpperInvariant(),
                     SlotStepMinutes = _slotStep,
                     DefaultBufferMinutes = _buffer,
                     BookingEnabled = _bookingEnabled
@@ -117,6 +123,61 @@ else
         catch (Exception ex)
         {
             _error = ex.Message;
+        }
+    }
+
+    private string? ValidateProfile()
+    {
+        if (string.IsNullOrWhiteSpace(_businessName))
+        {
+            return "Business name is required.";
+        }
+
+        if (string.IsNullOrWhiteSpace(_greetingText))
+        {
+            return "Greeting text is required.";
+        }
+
+        if (!IsValidCurrency(_currency))
+        {
+            return "Use a valid 3-letter currency code.";
+        }
+
+        if (!IsValidTimeZone(_timezone))
+        {
+            return "Timezone is invalid.";
+        }
+
+        if (_slotStep <= 0 || _slotStep > 120)
+        {
+            return "Slot step must be between 1 and 120.";
+        }
+
+        if (_buffer < 0 || _buffer > 240)
+        {
+            return "Buffer must be between 0 and 240.";
+        }
+
+        return null;
+    }
+
+    private static bool IsValidCurrency(string value)
+        => value.Trim().Length == 3 && value.Trim().All(char.IsAsciiLetter);
+
+    private static bool IsValidTimeZone(string value)
+    {
+        try
+        {
+            _ = TimeZoneInfo.FindSystemTimeZoneById(value);
+            return true;
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            return false;
+        }
+        catch (InvalidTimeZoneException)
+        {
+            return false;
         }
     }
 }

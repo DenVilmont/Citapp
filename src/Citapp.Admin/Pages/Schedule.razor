@@ -109,13 +109,33 @@
 
     private async Task SaveDayAsync(WorkingDayVm day)
     {
+        _error = string.Empty;
+        _message = string.Empty;
+        if (day.DayOfWeek is < 0 or > 6)
+        {
+            _error = "Day is invalid.";
+            return;
+        }
+
+        if (!TimeOnly.TryParse(day.StartText, out var startTime) || !TimeOnly.TryParse(day.EndText, out var endTime))
+        {
+            _error = "Start and end times are required.";
+            return;
+        }
+
+        if (day.IsWorkingDay && startTime >= endTime)
+        {
+            _error = "Start time must be before end time.";
+            return;
+        }
+
         try
         {
             await ScheduleRepository.UpsertWorkingDayAsync(
                 Session.TenantId!.Value,
                 day.DayOfWeek,
-                TimeOnly.Parse(day.StartText),
-                TimeOnly.Parse(day.EndText),
+                startTime,
+                endTime,
                 day.IsWorkingDay);
             _message = "Day saved.";
         }
@@ -127,8 +147,34 @@
 
     private async Task AddBreakAsync()
     {
-        await ScheduleRepository.AddBreakAsync(Session.TenantId!.Value, _breakDay, TimeOnly.Parse(_breakStart), TimeOnly.Parse(_breakEnd), _breakLabel);
+        _error = string.Empty;
+        _message = string.Empty;
+        if (_breakDay is < 0 or > 6)
+        {
+            _error = "Day is invalid.";
+            return;
+        }
+        if (_week.First(x => x.DayOfWeek == _breakDay).IsWorkingDay is false)
+        {
+            _error = "Cannot add a break to a non-working day.";
+            return;
+        }
+
+        if (!TimeOnly.TryParse(_breakStart, out var start) || !TimeOnly.TryParse(_breakEnd, out var end))
+        {
+            _error = "Break start and end are required.";
+            return;
+        }
+
+        if (start >= end)
+        {
+            _error = "Break start must be before end.";
+            return;
+        }
+
+        await ScheduleRepository.AddBreakAsync(Session.TenantId!.Value, _breakDay, start, end, _breakLabel);
         _breakLabel = string.Empty;
+        _message = "Break added.";
         await ReloadAsync();
     }
 
@@ -140,14 +186,47 @@
 
     private async Task AddBlockedDateAsync()
     {
-        var date = DateOnly.Parse(_blockedDate);
-        TimeOnly? start = string.IsNullOrWhiteSpace(_blockedStart) ? null : TimeOnly.Parse(_blockedStart);
-        TimeOnly? end = string.IsNullOrWhiteSpace(_blockedEnd) ? null : TimeOnly.Parse(_blockedEnd);
+        _error = string.Empty;
+        _message = string.Empty;
+        if (!DateOnly.TryParse(_blockedDate, out var date))
+        {
+            _error = "Date is required.";
+            return;
+        }
+
+        var hasStart = !string.IsNullOrWhiteSpace(_blockedStart);
+        var hasEnd = !string.IsNullOrWhiteSpace(_blockedEnd);
+        if (hasStart != hasEnd)
+        {
+            _error = "Use both start and end, or leave both empty for full day.";
+            return;
+        }
+
+        TimeOnly? start = null;
+        TimeOnly? end = null;
+        if (hasStart)
+        {
+            if (!TimeOnly.TryParse(_blockedStart, out var parsedStart) || !TimeOnly.TryParse(_blockedEnd, out var parsedEnd))
+            {
+                _error = "Blocked interval time is invalid.";
+                return;
+            }
+
+            if (parsedStart >= parsedEnd)
+            {
+                _error = "Blocked start must be before end.";
+                return;
+            }
+
+            start = parsedStart;
+            end = parsedEnd;
+        }
 
         await ScheduleRepository.AddBlockedDateAsync(Session.TenantId!.Value, date, start, end, _blockedReason);
         _blockedReason = string.Empty;
         _blockedStart = string.Empty;
         _blockedEnd = string.Empty;
+        _message = "Blocked date added.";
         await ReloadAsync();
     }
 

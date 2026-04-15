@@ -46,6 +46,7 @@ else
             <th>Status</th>
             <th>Source</th>
             <th>Service</th>
+            <th>Duration</th>
             <th>Price</th>
         </tr>
         </thead>
@@ -58,6 +59,7 @@ else
                 <td>@booking.Status</td>
                 <td>@booking.Source</td>
                 <td>@ResolveServiceLabel(booking.ServiceId)</td>
+                <td>@booking.DurationSnapshotMinutes min</td>
                 <td>@booking.PriceSnapshotAmount @booking.CurrencySnapshot</td>
             </tr>
         }

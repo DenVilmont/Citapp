@@ -420,6 +420,12 @@ public class CustomerRepository : ICustomerRepository
             .Filter("tenant_id", Operator.Equals, tenantId.ToString())
             .Order("created_at", Ordering.Descending)
             .Get();
+        var bookings = await _client.From<BookingRow>()
+            .Filter("tenant_id", Operator.Equals, tenantId.ToString())
+            .Get();
+        var bookingCounts = bookings.Models
+            .GroupBy(x => x.CustomerId)
+            .ToDictionary(x => x.Key, x => x.Count());
 
         var normalized = query.Trim();
         return response.Models
@@ -427,7 +433,7 @@ public class CustomerRepository : ICustomerRepository
                         || x.DisplayName.Contains(normalized, StringComparison.OrdinalIgnoreCase)
                         || x.WaUserId.Contains(normalized, StringComparison.OrdinalIgnoreCase)
                         || (x.Phone?.Contains(normalized, StringComparison.OrdinalIgnoreCase) ?? false))
-            .Select(ToDto)
+            .Select(x => ToDto(x, bookingCounts.GetValueOrDefault(x.Id)))
             .ToList();
     }
 
@@ -445,7 +451,7 @@ public class CustomerRepository : ICustomerRepository
 
         return response.Models
             .Where(x => ids.Contains(x.Id))
-            .Select(ToDto)
+            .Select(x => ToDto(x, 0))
             .ToList();
     }
 
@@ -457,7 +463,7 @@ public class CustomerRepository : ICustomerRepository
             .Limit(1)
             .Get();
 
-        return response.Models.Select(ToDto).FirstOrDefault();
+        return response.Models.Select(x => ToDto(x, 0)).FirstOrDefault();
     }
 
     public async Task<CustomerDto> CreateManualAsync(Guid tenantId, string displayName, string? phone)
@@ -471,7 +477,7 @@ public class CustomerRepository : ICustomerRepository
             Phone = string.IsNullOrWhiteSpace(phone) ? null : phone.Trim()
         });
 
-        return ToDto(response.Models.First());
+        return ToDto(response.Models.First(), 0);
     }
 
     public async Task UpdateNoteAsync(Guid id, Guid tenantId, string note)
@@ -487,8 +493,8 @@ public class CustomerRepository : ICustomerRepository
         await row.Update<CustomerRow>();
     }
 
-    private static CustomerDto ToDto(CustomerRow r)
-        => new(r.Id, r.TenantId, r.WaUserId, r.Phone, r.DisplayName, r.MasterNote, r.CreatedAt, r.LastSeenAt);
+    private static CustomerDto ToDto(CustomerRow r, int bookingCount)
+        => new(r.Id, r.TenantId, r.WaUserId, r.Phone, r.DisplayName, r.MasterNote, r.CreatedAt, r.LastSeenAt, bookingCount);
 }
 
 public class ScheduleRepository : IScheduleRepository

@@ -12,7 +12,7 @@ public record ServiceMediaDto(Guid Id, Guid ServiceId, string StoragePath, strin
 public record WorkingHoursDto(Guid Id, Guid TenantId, int DayOfWeek, TimeOnly StartTime, TimeOnly EndTime, bool IsWorkingDay);
 public record FixedBreakDto(Guid Id, Guid TenantId, int DayOfWeek, TimeOnly StartTime, TimeOnly EndTime, string? Label);
 public record BlockedDateDto(Guid Id, Guid TenantId, DateOnly Date, TimeOnly? StartTime, TimeOnly? EndTime, string? Reason);
-public record CustomerDto(Guid Id, Guid TenantId, string WaUserId, string? Phone, string DisplayName, string? MasterNote, DateTimeOffset CreatedAt, DateTimeOffset? LastSeenAt);
+public record CustomerDto(Guid Id, Guid TenantId, string WaUserId, string? Phone, string DisplayName, string? MasterNote, DateTimeOffset CreatedAt, DateTimeOffset? LastSeenAt, int BookingCount);
 public record BookingDto(Guid Id, Guid TenantId, Guid CustomerId, Guid ServiceId, BookingSource Source, BookingStatus Status, DateOnly Date, DateTimeOffset StartAt, DateTimeOffset EndAt, int DurationSnapshotMinutes, decimal PriceSnapshotAmount, string CurrencySnapshot, Guid? CreatedByUserId, CancelledBy? CancelledBy, DateTimeOffset? CancelledAt, DateTimeOffset CreatedAt);
 public record ConversationStateDto(Guid Id, Guid TenantId, Guid CustomerId, BotState State, string? PayloadJson, DateTimeOffset UpdatedAt, DateTimeOffset ExpiresAt);
 public record InboundWebhookEventDto(Guid Id, string Provider, string ExternalEventId, Guid? TenantId, string Direction, string PayloadJson, bool Processed, DateTimeOffset CreatedAt);

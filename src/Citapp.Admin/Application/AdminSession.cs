@@ -1,6 +1,8 @@
 using Citapp.Admin.Domain.Ports;
 using Citapp.Shared.DTOs;
 using Supabase;
+using System.Net.Http.Json;
+using System.Text.Json.Serialization;
 
 namespace Citapp.Admin.Application;
 
@@ -9,12 +11,16 @@ public class AdminSession
     private readonly Client _supabase;
     private readonly ITenantRepository _tenantRepository;
     private readonly IProfileRepository _profileRepository;
+    private readonly string _supabaseUrl;
+    private readonly string _supabaseAnonKey;
 
-    public AdminSession(Client supabase, ITenantRepository tenantRepository, IProfileRepository profileRepository)
+    public AdminSession(Client supabase, ITenantRepository tenantRepository, IProfileRepository profileRepository, IConfiguration configuration)
     {
         _supabase = supabase;
         _tenantRepository = tenantRepository;
         _profileRepository = profileRepository;
+        _supabaseUrl = (configuration["Supabase:Url"] ?? string.Empty).TrimEnd('/');
+        _supabaseAnonKey = configuration["Supabase:AnonKey"] ?? string.Empty;
     }
 
     public Guid? UserId { get; private set; }
@@ -80,6 +86,28 @@ public class AdminSession
         return true;
     }
 
+    public async Task<bool> SendMagicLinkAsync(string email)
+    {
+        await _supabase.InitializeAsync();
+
+        if (string.IsNullOrWhiteSpace(_supabaseUrl) || string.IsNullOrWhiteSpace(_supabaseAnonKey))
+        {
+            return false;
+        }
+
+        using var http = new HttpClient();
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{_supabaseUrl}/auth/v1/otp");
+        request.Headers.Add("apikey", _supabaseAnonKey);
+
+        request.Content = JsonContent.Create(new MagicLinkRequest(
+            email.Trim(),
+            false,
+            null));
+
+        var response = await http.SendAsync(request);
+        return response.IsSuccessStatusCode;
+    }
+
     public async Task LogoutAsync()
     {
         await _supabase.Auth.SignOut();
@@ -92,4 +120,9 @@ public class AdminSession
         Email = string.Empty;
         TenantId = null;
     }
+
+    private sealed record MagicLinkRequest(
+        [property: JsonPropertyName("email")] string Email,
+        [property: JsonPropertyName("create_user")] bool CreateUser,
+        [property: JsonPropertyName("email_redirect_to")] string? EmailRedirectTo);
 }

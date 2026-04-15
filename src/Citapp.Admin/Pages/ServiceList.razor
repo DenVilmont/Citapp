@@ -120,11 +120,27 @@
     {
         _error = string.Empty;
         _message = string.Empty;
+        var validationError = ValidateService();
+        if (validationError is not null)
+        {
+            _error = validationError;
+            return;
+        }
 
         try
         {
             var sortOrder = _editingId is null ? _services.Count : _services.First(x => x.Id == _editingId.Value).SortOrder;
-            var dto = new ServiceDto(_editingId ?? Guid.Empty, Session.TenantId!.Value, _name, _description, _duration, _price, _currency, _isActive, sortOrder, DateTimeOffset.UtcNow);
+            var dto = new ServiceDto(
+                _editingId ?? Guid.Empty,
+                Session.TenantId!.Value,
+                _name.Trim(),
+                string.IsNullOrWhiteSpace(_description) ? null : _description.Trim(),
+                _duration,
+                _price,
+                _currency.Trim().ToUpperInvariant(),
+                _isActive,
+                sortOrder,
+                DateTimeOffset.UtcNow);
             if (_editingId is null)
             {
                 await ServiceRepository.CreateAsync(dto, Session.TenantId.Value);
@@ -241,4 +257,32 @@
         _currency = "EUR";
         _isActive = true;
     }
+
+    private string? ValidateService()
+    {
+        if (string.IsNullOrWhiteSpace(_name))
+        {
+            return "Name is required.";
+        }
+
+        if (_duration <= 0 || _duration > 480)
+        {
+            return "Duration must be between 1 and 480.";
+        }
+
+        if (_price < 0)
+        {
+            return "Price cannot be negative.";
+        }
+
+        if (!IsValidCurrency(_currency))
+        {
+            return "Use a valid 3-letter currency code.";
+        }
+
+        return null;
+    }
+
+    private static bool IsValidCurrency(string value)
+        => value.Trim().Length == 3 && value.Trim().All(char.IsAsciiLetter);
 }
