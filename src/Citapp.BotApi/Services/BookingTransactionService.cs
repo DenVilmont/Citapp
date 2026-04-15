@@ -52,8 +52,8 @@ public class BookingTransactionService
         await using var tx = await conn.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
         try
         {
-            await EnsureSlotIsAvailableInTransaction(tenantId, dto.ServiceId, dto.StartAt.ToUniversalTime(), localDate, conn, tx);
             await EnsureReplacementBookingIsValidInTransaction(tenantId, dto.CustomerId, dto.ServiceId, replacingBookingId, conn, tx);
+            await EnsureSlotIsAvailableInTransaction(tenantId, dto.ServiceId, dto.StartAt.ToUniversalTime(), localDate, conn, tx);
             await EnsureNoDuplicateActiveBookingInTransaction(tenantId, dto.CustomerId, dto.ServiceId, replacingBookingId, conn, tx);
 
             var create = dto with
@@ -66,8 +66,8 @@ public class BookingTransactionService
                 CurrencySnapshot = service.Currency
             };
 
-            var booking = await CreateInTransaction(tenantId, create, createdByUserId, conn, tx);
             await CancelReplacedBookingInTransaction(tenantId, replacingBookingId, conn, tx);
+            var booking = await CreateInTransaction(tenantId, create, createdByUserId, conn, tx);
             await tx.CommitAsync();
             return booking;
         }
@@ -77,6 +77,11 @@ public class BookingTransactionService
             throw new BookingConflictException("Slot was just taken. Please choose another time.");
         }
         catch (BookingConflictException)
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+        catch
         {
             await tx.RollbackAsync();
             throw;
