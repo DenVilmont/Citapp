@@ -5,78 +5,105 @@
 @inject ServicePageService ServicePageService
 @inject NavigationManager Nav
 
-<h3>Services</h3>
+<MudText Typo="Typo.h4" Class="mb-4">Services</MudText>
 
 @if (!string.IsNullOrWhiteSpace(_message))
 {
-    <p>@_message</p>
+    <MudAlert Severity="Severity.Success" Dense="true" Class="mb-3">@_message</MudAlert>
 }
 @if (!string.IsNullOrWhiteSpace(_error))
 {
-    <p style="color:red">@_error</p>
+    <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3">@_error</MudAlert>
 }
 
-<div style="border:1px solid #ddd; padding:12px; margin-bottom:12px;">
-    <h4>@(_editingId is null ? "Create service" : "Edit service")</h4>
-    <div><label>Name</label><br /><input @bind="_name" /></div>
-    <div><label>Description</label><br /><textarea @bind="_description"></textarea></div>
-    <div class="row">
-        <div><label>Duration min</label><br /><input @bind="_duration" type="number" /></div>
-        <div><label>Price</label><br /><input @bind="_price" type="number" step="0.01" /></div>
-        <div><label>Currency</label><br /><input @bind="_currency" /></div>
-    </div>
-    <div><label><input @bind="_isActive" type="checkbox" /> Active</label></div>
-    <button @onclick="SaveAsync">Save</button>
-    @if (_editingId is not null)
-    {
-        <button @onclick="ResetForm">Cancel edit</button>
-    }
-</div>
+<MudPaper Class="pa-4 mb-4" Outlined="true">
+    <MudText Typo="Typo.h6" Class="mb-3">@(_editingId is null ? "Create service" : "Edit service")</MudText>
+    <MudGrid>
+        <MudItem xs="12" md="6">
+            <MudTextField @bind-Value="_name" Label="Name" Variant="Variant.Outlined" FullWidth="true" />
+        </MudItem>
+        <MudItem xs="12" md="6">
+            <MudTextField @bind-Value="_description" Label="Description" Lines="3" Variant="Variant.Outlined" FullWidth="true" />
+        </MudItem>
+        <MudItem xs="12" md="3">
+            <MudNumericField @bind-Value="_duration" Label="Duration min" Variant="Variant.Outlined" FullWidth="true" />
+        </MudItem>
+        <MudItem xs="12" md="3">
+            <MudNumericField @bind-Value="_price" Label="Price" Variant="Variant.Outlined" FullWidth="true" />
+        </MudItem>
+        <MudItem xs="12" md="3">
+            <MudTextField @bind-Value="_currency" Label="Currency" Variant="Variant.Outlined" FullWidth="true" />
+        </MudItem>
+        <MudItem xs="12" md="3" Class="d-flex align-center">
+            <MudCheckBox @bind-Value="_isActive" Label="Active" Color="Color.Primary" />
+        </MudItem>
+    </MudGrid>
 
-<p style="margin:4px 0 12px 0; color:#555;">Drag and drop rows to reorder services.</p>
-<table>
-    <thead><tr><th></th><th>Name</th><th>Duration</th><th>Price</th><th>Active</th><th>Media</th><th></th></tr></thead>
-    <tbody>
-    @foreach (var service in _services)
-    {
-        <tr draggable="true"
-            @ondragstart="() => StartDrag(service.Id)"
-            @ondragover:preventDefault
-            @ondrop="() => DropOnServiceAsync(service.Id)"
-            style="border-top:1px solid #eee; vertical-align:top;">
-            <td style="cursor:grab;">↕</td>
-            <td>@service.Name</td>
-            <td>@service.DurationMinutes min</td>
-            <td>@service.PriceAmount @service.Currency</td>
-            <td>@(service.IsActive ? "Yes" : "No")</td>
-            <td>
-                <InputFile OnChange="(e) => UploadMediaAsync(service.Id, e)" accept="image/*" />
-                <div style="margin-top:6px;">
-                    @foreach (var media in GetMedia(service.Id))
-                    {
-                        <div style="margin-bottom:4px;">
-                            <a href="@media.PublicUrl" target="_blank">image</a>
-                            @if (media.IsPrimary)
-                            {
-                                <b>(primary)</b>
-                            }
-                            else
-                            {
-                                <button @onclick="() => SetPrimaryAsync(service.Id, media.Id)">Set primary</button>
-                            }
-                            <button @onclick="() => DeleteMediaAsync(service.Id, media.Id)">Delete</button>
-                        </div>
-                    }
-                </div>
-            </td>
-            <td>
-                <button @onclick="() => Edit(service)">Edit</button>
-                <button @onclick="() => ToggleActiveAsync(service)">@((service.IsActive ? "Deactivate" : "Activate"))</button>
-            </td>
-        </tr>
-    }
-    </tbody>
-</table>
+    <MudStack Row="true" Spacing="2" Class="mt-4">
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Save" OnClick="SaveAsync">Save</MudButton>
+        @if (_editingId is not null)
+        {
+            <MudButton Color="Color.Default" Variant="Variant.Outlined" OnClick="ResetForm">Cancel edit</MudButton>
+        }
+    </MudStack>
+</MudPaper>
+
+<MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-2">Drag and drop rows to reorder services.</MudText>
+
+<MudTable Items="_services" Dense="true" Hover="true" Outlined="true">
+    <HeaderContent>
+        <MudTh></MudTh>
+        <MudTh>Name</MudTh>
+        <MudTh>Duration</MudTh>
+        <MudTh>Price</MudTh>
+        <MudTh>Active</MudTh>
+        <MudTh>Media</MudTh>
+        <MudTh>Actions</MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd DataLabel="Reorder">
+            <div draggable="true"
+                 @ondragstart="() => StartDrag(context.Id)"
+                 @ondragover:preventDefault
+                 @ondrop="() => DropOnServiceAsync(context.Id)"
+                 style="cursor: grab; font-size: 18px;">↕</div>
+        </MudTd>
+        <MudTd DataLabel="Name">@context.Name</MudTd>
+        <MudTd DataLabel="Duration">@context.DurationMinutes min</MudTd>
+        <MudTd DataLabel="Price">@context.PriceAmount @context.Currency</MudTd>
+        <MudTd DataLabel="Active">
+            <MudChip T="string" Color="@(context.IsActive ? Color.Success : Color.Default)" Variant="Variant.Outlined" Size="Size.Small">
+                @(context.IsActive ? "Yes" : "No")
+            </MudChip>
+        </MudTd>
+        <MudTd DataLabel="Media">
+            <InputFile OnChange="(e) => UploadMediaAsync(context.Id, e)" accept="image/*" />
+            <MudStack Spacing="1" Class="mt-2">
+                @foreach (var media in GetMedia(context.Id))
+                {
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                        <MudLink Href="@media.PublicUrl" Target="_blank">image</MudLink>
+                        @if (media.IsPrimary)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Primary" Variant="Variant.Outlined">primary</MudChip>
+                        }
+                        else
+                        {
+                            <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="() => SetPrimaryAsync(context.Id, media.Id)">Set primary</MudButton>
+                        }
+                        <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error" OnClick="() => DeleteMediaAsync(context.Id, media.Id)">Delete</MudButton>
+                    </MudStack>
+                }
+            </MudStack>
+        </MudTd>
+        <MudTd DataLabel="Actions">
+            <MudStack Row="true" Spacing="1">
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="() => Edit(context)">Edit</MudButton>
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="() => ToggleActiveAsync(context)">@((context.IsActive ? "Deactivate" : "Activate"))</MudButton>
+            </MudStack>
+        </MudTd>
+    </RowTemplate>
+</MudTable>
 
 @code {
     private readonly List<ServiceDto> _services = new();

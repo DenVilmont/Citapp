@@ -2,36 +2,36 @@
 @inject NavigationManager Nav
 @inject AdminSession Session
 
-<div class="shell">
+<MudThemeProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<MudLayout>
     @if (ShowNav)
     {
-        <aside class="menu">
-            <h3>Citapp Admin</h3>
-            <nav>
-                <a href="/dashboard">Dashboard</a>
-                <a href="/profile">Profile</a>
-                <a href="/servicelist">Services</a>
-                <a href="/schedule">Schedule</a>
-                <a href="/bookingcalendar">Bookings</a>
-                <a href="/customerlist">Customers</a>
-            </nav>
-            <button @onclick="Logout">Logout</button>
-        </aside>
+        <MudDrawer Elevation="1" Open="true" Variant="DrawerVariant.Mini" ClipMode="DrawerClipMode.Always" Width="250px" MiniWidth="72px">
+            <MudDrawerHeader>
+                <MudText Typo="Typo.h6">Citapp Admin</MudText>
+            </MudDrawerHeader>
+            <MudNavMenu>
+                <MudNavLink Href="/dashboard" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Dashboard">Dashboard</MudNavLink>
+                <MudNavLink Href="/profile" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Person">Profile</MudNavLink>
+                <MudNavLink Href="/servicelist" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.ContentCut">Services</MudNavLink>
+                <MudNavLink Href="/schedule" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Schedule">Schedule</MudNavLink>
+                <MudNavLink Href="/bookingcalendar" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.CalendarMonth">Bookings</MudNavLink>
+                <MudNavLink Href="/customerlist" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Groups">Customers</MudNavLink>
+            </MudNavMenu>
+            <MudSpacer />
+            <MudButton Variant="Variant.Filled" Color="Color.Default" StartIcon="@Icons.Material.Filled.Logout" OnClick="Logout" Class="ma-2">Logout</MudButton>
+        </MudDrawer>
     }
-    <main class="content">@Body</main>
-</div>
 
-<style>
-    .shell { display: flex; min-height: 100vh; font-family: sans-serif; }
-    .menu { width: 220px; background: #f5f5f5; padding: 16px; }
-    .menu nav { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
-    .menu a { text-decoration: none; }
-    .content { flex: 1; padding: 20px; }
-    table { border-collapse: collapse; width: 100%; }
-    td, th { border: 1px solid #ddd; padding: 8px; text-align: left; }
-    input, select, textarea, button { margin: 4px 0; padding: 6px; }
-    .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-</style>
+    <MudMainContent>
+        <MudContainer MaxWidth="MaxWidth.False" Class="pa-6">
+            @Body
+        </MudContainer>
+    </MudMainContent>
+</MudLayout>
 
 @code {
     private bool ShowNav => !Nav.Uri.EndsWith("/", StringComparison.OrdinalIgnoreCase)

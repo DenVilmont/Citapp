@@ -4,40 +4,49 @@
 @inject CustomerPageService CustomerPageService
 @inject NavigationManager Nav
 
-<h3>Customers</h3>
+<MudText Typo="Typo.h4" Class="mb-4">Customers</MudText>
 
-<div class="row">
-    <input @bind="_query" placeholder="Search by name, WA user id, phone" />
-    <button @onclick="LoadAsync">Search</button>
-</div>
+<MudPaper Class="pa-4 mb-4" Outlined="true">
+    <MudGrid>
+        <MudItem xs="12" md="9">
+            <MudTextField @bind-Value="_query" Label="Search by name, WA user id, phone" Variant="Variant.Outlined" FullWidth="true" />
+        </MudItem>
+        <MudItem xs="12" md="3" Class="d-flex align-end">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="LoadAsync">Search</MudButton>
+        </MudItem>
+    </MudGrid>
+</MudPaper>
 
 @if (!string.IsNullOrWhiteSpace(_message))
 {
-    <p>@_message</p>
+    <MudAlert Severity="Severity.Success" Dense="true" Class="mb-3">@_message</MudAlert>
 }
 
-<table>
-    <thead><tr><th>Name</th><th>WA user</th><th>Phone</th><th>Bookings</th><th>Last seen</th><th>Note</th><th>Card</th></tr></thead>
-    <tbody>
-    @foreach (var c in _customers)
-    {
-        <tr>
-            <td>@c.DisplayName</td>
-            <td>@c.WaUserId</td>
-            <td>@c.Phone</td>
-            <td>@c.BookingCount</td>
-            <td>@c.LastSeenAt</td>
-            <td>
-                <textarea @bind="_notes[c.Id]"></textarea>
-                <button @onclick="() => SaveNoteAsync(c.Id)">Save note</button>
-            </td>
-            <td>
-                <a href="@($"/customercard/{c.Id}")">Open</a>
-            </td>
-        </tr>
-    }
-    </tbody>
-</table>
+<MudTable Items="_customers" Dense="true" Hover="true" Outlined="true">
+    <HeaderContent>
+        <MudTh>Name</MudTh>
+        <MudTh>WA user</MudTh>
+        <MudTh>Phone</MudTh>
+        <MudTh>Bookings</MudTh>
+        <MudTh>Last seen</MudTh>
+        <MudTh>Note</MudTh>
+        <MudTh>Card</MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd DataLabel="Name">@context.DisplayName</MudTd>
+        <MudTd DataLabel="WA user">@context.WaUserId</MudTd>
+        <MudTd DataLabel="Phone">@context.Phone</MudTd>
+        <MudTd DataLabel="Bookings">@context.BookingCount</MudTd>
+        <MudTd DataLabel="Last seen">@context.LastSeenAt</MudTd>
+        <MudTd DataLabel="Note" Style="min-width: 260px;">
+            <MudTextField @bind-Value="_notes[context.Id]" Variant="Variant.Outlined" Lines="2" FullWidth="true" Margin="Margin.Dense" />
+            <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="() => SaveNoteAsync(context.Id)">Save note</MudButton>
+        </MudTd>
+        <MudTd DataLabel="Card">
+            <MudLink Href="@($"/customercard/{context.Id}")">Open</MudLink>
+        </MudTd>
+    </RowTemplate>
+</MudTable>
 
 @code {
     private string _query = string.Empty;

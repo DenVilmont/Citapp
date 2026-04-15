@@ -3,40 +3,66 @@
 @inject ProfilePageService ProfilePageService
 @inject NavigationManager Nav
 
-<h3>Profile</h3>
+<MudText Typo="Typo.h4" Class="mb-4">Profile</MudText>
 
 @if (_loading)
 {
-    <p>Loading...</p>
+    <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
 }
 else
 {
-    if (!string.IsNullOrWhiteSpace(_message))
+    @if (!string.IsNullOrWhiteSpace(_message))
     {
-        <p>@_message</p>
+        <MudAlert Severity="Severity.Success" Dense="true" Class="mb-3">@_message</MudAlert>
     }
-    if (!string.IsNullOrWhiteSpace(_error))
+    @if (!string.IsNullOrWhiteSpace(_error))
     {
-        <p style="color:red">@_error</p>
+        <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3">@_error</MudAlert>
     }
 
-    <h4>Account</h4>
-    <div><label>Email</label><br /><input @bind="_email" disabled /></div>
-    <div><label>Display name</label><br /><input @bind="_displayName" /></div>
+    <MudPaper Class="pa-4 mb-4" Outlined="true">
+        <MudText Typo="Typo.h6" Class="mb-3">Account</MudText>
+        <MudGrid>
+            <MudItem xs="12" md="6">
+                <MudTextField @bind-Value="_email" Label="Email" Disabled="true" Variant="Variant.Outlined" FullWidth="true" />
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudTextField @bind-Value="_displayName" Label="Display name" Variant="Variant.Outlined" FullWidth="true" />
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
 
-    <h4>Business</h4>
-    <div><label>Business name</label><br /><input @bind="_businessName" /></div>
-    <div><label>About</label><br /><textarea @bind="_aboutText"></textarea></div>
-    <div><label>Greeting text</label><br /><textarea @bind="_greetingText"></textarea></div>
-    <div class="row">
-        <div><label>Timezone</label><br /><input @bind="_timezone" /></div>
-        <div><label>Currency</label><br /><input @bind="_currency" /></div>
-        <div><label>Slot step (min)</label><br /><input @bind="_slotStep" type="number" /></div>
-        <div><label>Buffer (min)</label><br /><input @bind="_buffer" type="number" /></div>
-    </div>
-    <div><label><input @bind="_bookingEnabled" type="checkbox" /> Booking enabled</label></div>
+    <MudPaper Class="pa-4 mb-4" Outlined="true">
+        <MudText Typo="Typo.h6" Class="mb-3">Business</MudText>
+        <MudGrid>
+            <MudItem xs="12" md="6">
+                <MudTextField @bind-Value="_businessName" Label="Business name" Variant="Variant.Outlined" FullWidth="true" />
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudTextField @bind-Value="_timezone" Label="Timezone" Variant="Variant.Outlined" FullWidth="true" />
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudTextField @bind-Value="_currency" Label="Currency" Variant="Variant.Outlined" FullWidth="true" />
+            </MudItem>
+            <MudItem xs="12" md="3">
+                <MudNumericField @bind-Value="_slotStep" Label="Slot step (min)" Variant="Variant.Outlined" FullWidth="true" />
+            </MudItem>
+            <MudItem xs="12" md="3">
+                <MudNumericField @bind-Value="_buffer" Label="Buffer (min)" Variant="Variant.Outlined" FullWidth="true" />
+            </MudItem>
+            <MudItem xs="12">
+                <MudTextField @bind-Value="_aboutText" Label="About" Variant="Variant.Outlined" Lines="4" FullWidth="true" />
+            </MudItem>
+            <MudItem xs="12">
+                <MudTextField @bind-Value="_greetingText" Label="Greeting text" Variant="Variant.Outlined" Lines="4" FullWidth="true" />
+            </MudItem>
+            <MudItem xs="12">
+                <MudCheckBox @bind-Value="_bookingEnabled" Label="Booking enabled" Color="Color.Primary" />
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
 
-    <button @onclick="SaveAsync">Save</button>
+    <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Save" OnClick="SaveAsync">Save</MudButton>
 }
 
 @code {
