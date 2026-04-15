@@ -80,7 +80,7 @@ public class TenantRepository
     public async Task<TenantBotSettings?> GetBotSettingsAsync(Guid tenantId)
     {
         const string sql = """
-            select id, about_text, greeting_text, booking_enabled, timezone
+            select id, about_text, greeting_text, booking_enabled, timezone, business_name
             from tenants
             where id = @tenant_id
             limit 1
@@ -102,7 +102,8 @@ public class TenantRepository
             reader.IsDBNull(1) ? null : reader.GetString(1),
             reader.GetString(2),
             reader.GetBoolean(3),
-            reader.GetString(4));
+            reader.GetString(4),
+            reader.GetString(5));
     }
 
     internal static string ResolveConnectionString(IConfiguration configuration)
@@ -115,7 +116,7 @@ public class TenantRepository
 
 public record TenantSettings(Guid TenantId, string Timezone, int SlotStepMinutes, int DefaultBufferMinutes);
 public record ServiceSnapshot(Guid ServiceId, bool IsActive, int DurationMinutes, decimal PriceAmount, string Currency);
-public record TenantBotSettings(Guid TenantId, string? AboutText, string GreetingText, bool BookingEnabled, string Timezone);
+public record TenantBotSettings(Guid TenantId, string? AboutText, string GreetingText, bool BookingEnabled, string Timezone, string BusinessName);
 public record ActiveServiceForBot(Guid ServiceId, string Name, int DurationMinutes, decimal PriceAmount, string Currency, bool HasPrimaryImage, string? PrimaryImageUrl);
 
 public class CustomerRepository
