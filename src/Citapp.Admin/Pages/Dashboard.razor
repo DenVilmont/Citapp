@@ -17,7 +17,9 @@ else if (!string.IsNullOrWhiteSpace(_error))
 else
 {
     <div class="row">
-        <div><strong>This week active bookings:</strong> @_activeThisWeek</div>
+        <div><strong>This week occupied slots:</strong> @_occupiedThisWeek</div>
+        <div><strong>Active customer bookings:</strong> @_activeCustomerBookingsThisWeek</div>
+        <div><strong>Blocked/held slots:</strong> @_blockedOrHeldSlotsThisWeek</div>
         <div><strong>WhatsApp status:</strong> @_waStatus</div>
     </div>
 
@@ -42,7 +44,9 @@ else
     private bool _loading = true;
     private string _error = string.Empty;
     private string _waStatus = "not connected";
-    private int _activeThisWeek;
+    private int _occupiedThisWeek;
+    private int _activeCustomerBookingsThisWeek;
+    private int _blockedOrHeldSlotsThisWeek;
     private List<BookingDto> _today = new();
     private List<BookingDto> _upcoming = new();
     private TimeZoneInfo _tenantTimeZone = TimeZoneInfo.Utc;
@@ -65,8 +69,15 @@ else
             var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, _tenantTimeZone).DateTime);
             var endOfWeek = today.AddDays(6 - (int)today.DayOfWeek);
 
-            var weekBookings = await BookingRepository.GetForRangeAsync(tenantId, today, endOfWeek, BookingStatus.Booked);
-            _activeThisWeek = weekBookings.Count;
+            // Occupied time semantics:
+            // - Booked + BlockedByMaster occupy slots.
+            // - Completed/NoShow/Cancelled do not occupy future availability.
+            var activeCustomerBookings = await BookingRepository.GetForRangeAsync(tenantId, today, endOfWeek, BookingStatus.Booked);
+            var blockedOrHeldSlots = await BookingRepository.GetForRangeAsync(tenantId, today, endOfWeek, BookingStatus.BlockedByMaster);
+
+            _activeCustomerBookingsThisWeek = activeCustomerBookings.Count;
+            _blockedOrHeldSlotsThisWeek = blockedOrHeldSlots.Count;
+            _occupiedThisWeek = _activeCustomerBookingsThisWeek + _blockedOrHeldSlotsThisWeek;
 
             _today = (await BookingRepository.GetForRangeAsync(tenantId, today, today, null)).OrderBy(x => x.StartAt).ToList();
             _upcoming = (await BookingRepository.GetUpcomingAsync(tenantId, DateTimeOffset.UtcNow)).Take(10).ToList();
