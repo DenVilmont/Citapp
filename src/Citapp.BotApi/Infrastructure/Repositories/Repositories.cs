@@ -177,12 +177,13 @@ public class CustomerRepository
         return ReadCustomer(reader);
     }
 
-    public async Task UpdateLastSeenAsync(Guid id, Guid tenantId)
+    public async Task<DateTimeOffset?> UpdateLastSeenAsync(Guid id, Guid tenantId)
     {
         const string sql = """
             update customers
             set last_seen_at = now()
             where id = @id and tenant_id = @tenant_id
+            returning last_seen_at
             """;
 
         await using var conn = new NpgsqlConnection(_connectionString);
@@ -190,7 +191,13 @@ public class CustomerRepository
         await using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("id", id);
         cmd.Parameters.AddWithValue("tenant_id", tenantId);
-        await cmd.ExecuteNonQueryAsync();
+        var value = await cmd.ExecuteScalarAsync();
+        return value switch
+        {
+            DateTimeOffset dto => dto,
+            DateTime dt => new DateTimeOffset(DateTime.SpecifyKind(dt, DateTimeKind.Utc)),
+            _ => null
+        };
     }
 
     public async Task UpdateProfileAsync(Guid id, Guid tenantId, string? displayName, string? phone)

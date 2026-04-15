@@ -35,8 +35,9 @@ public class BotFsmHandler
         _sender = sender;
     }
 
-    public async Task HandleAsync(Guid tenantId, Guid customerId, string waUserId, string phoneNumberId, string messageType, string? interactiveType, string? payloadId, string? textBody)
+    public async Task HandleAsync(Guid tenantId, Guid customerId, string waUserId, string phoneNumberId, DateTimeOffset customerLastSeenAt, string messageType, string? interactiveType, string? payloadId, string? textBody)
     {
+        using var _ = _sender.BeginOutboundScope(tenantId, customerId, waUserId, customerLastSeenAt);
         var tenant = await _tenants.GetBotSettingsAsync(tenantId);
         if (tenant is null)
         {
