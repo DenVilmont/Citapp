@@ -17,7 +17,7 @@
 }
 
 <table>
-    <thead><tr><th>Name</th><th>WA user</th><th>Phone</th><th>Last seen</th><th>Note</th></tr></thead>
+    <thead><tr><th>Name</th><th>WA user</th><th>Phone</th><th>Last seen</th><th>Note</th><th>Card</th></tr></thead>
     <tbody>
     @foreach (var c in _customers)
     {
@@ -29,6 +29,9 @@
             <td>
                 <textarea @bind="_notes[c.Id]"></textarea>
                 <button @onclick="() => SaveNoteAsync(c.Id)">Save note</button>
+            </td>
+            <td>
+                <a href="@($"/customercard/{c.Id}")">Open</a>
             </td>
         </tr>
     }
