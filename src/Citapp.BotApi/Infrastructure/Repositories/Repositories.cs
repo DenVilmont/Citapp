@@ -50,6 +50,33 @@ public class TenantRepository
         return value is Guid id ? id : null;
     }
 
+    public async Task<TenantSettings?> GetSettingsAsync(Guid tenantId)
+    {
+        const string sql = """
+            select id, timezone, slot_step_minutes, default_buffer_minutes
+            from tenants
+            where id = @tenant_id
+            limit 1
+            """;
+
+        await using var conn = new NpgsqlConnection(_connectionString);
+        await conn.OpenAsync();
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("tenant_id", tenantId);
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        if (!await reader.ReadAsync())
+        {
+            return null;
+        }
+
+        return new TenantSettings(
+            reader.GetGuid(0),
+            reader.GetString(1),
+            reader.GetInt32(2),
+            reader.GetInt32(3));
+    }
+
     internal static string ResolveConnectionString(IConfiguration configuration)
     {
         return configuration["SUPABASE_DB_CONNECTION_STRING"]
@@ -57,6 +84,9 @@ public class TenantRepository
             ?? throw new InvalidOperationException("SUPABASE_DB_CONNECTION_STRING is not configured.");
     }
 }
+
+public record TenantSettings(Guid TenantId, string Timezone, int SlotStepMinutes, int DefaultBufferMinutes);
+public record ServiceSnapshot(Guid ServiceId, bool IsActive, int DurationMinutes, decimal PriceAmount, string Currency);
 
 public class CustomerRepository
 {
@@ -295,6 +325,26 @@ public class BookingRepository
         await cmd.ExecuteNonQueryAsync();
     }
 
+    public async Task<BookingDto?> GetByIdAsync(Guid tenantId, Guid id)
+    {
+        const string sql = """
+            select id, tenant_id, customer_id, service_id, source, status, date, start_at, end_at,
+                   duration_snapshot_minutes, price_snapshot_amount, currency_snapshot,
+                   created_by_user_id, cancelled_by, cancelled_at, created_at
+            from bookings
+            where tenant_id = @tenant_id and id = @id
+            limit 1
+            """;
+
+        await using var conn = new NpgsqlConnection(_connectionString);
+        await conn.OpenAsync();
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("tenant_id", tenantId);
+        cmd.Parameters.AddWithValue("id", id);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        return await reader.ReadAsync() ? ReadBooking(reader) : null;
+    }
+
     private async Task<List<BookingDto>> QueryBookingsAsync(string sql, Action<NpgsqlCommand> configure)
     {
         var items = new List<BookingDto>();
@@ -342,6 +392,44 @@ public class BookingRepository
     {
         var normalized = value.Replace("_", string.Empty, StringComparison.Ordinal);
         return Enum.Parse<TEnum>(normalized, ignoreCase: true);
+    }
+}
+
+public class ServiceRepository
+{
+    private readonly string _connectionString;
+
+    public ServiceRepository(IConfiguration configuration)
+    {
+        _connectionString = TenantRepository.ResolveConnectionString(configuration);
+    }
+
+    public async Task<ServiceSnapshot?> GetSnapshotAsync(Guid tenantId, Guid serviceId)
+    {
+        const string sql = """
+            select id, is_active, duration_minutes, price_amount, currency
+            from services
+            where tenant_id = @tenant_id and id = @service_id
+            limit 1
+            """;
+
+        await using var conn = new NpgsqlConnection(_connectionString);
+        await conn.OpenAsync();
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("tenant_id", tenantId);
+        cmd.Parameters.AddWithValue("service_id", serviceId);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        if (!await reader.ReadAsync())
+        {
+            return null;
+        }
+
+        return new ServiceSnapshot(
+            reader.GetGuid(0),
+            reader.GetBoolean(1),
+            reader.GetInt32(2),
+            reader.GetDecimal(3),
+            reader.GetString(4));
     }
 }
 
