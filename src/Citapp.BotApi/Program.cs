@@ -45,6 +45,7 @@ builder.Services.AddScoped<SlotCalculationService>();
 builder.Services.AddScoped<BookingTransactionService>();
 builder.Services.AddScoped<BotFsmHandler>();
 builder.Services.AddScoped<WebhookProcessor>();
+builder.Services.AddHostedService<ConversationStateCleanupService>();
 
 var app = builder.Build();
 app.UseCors();
@@ -85,7 +86,11 @@ app.MapPost("/api/bookings", async (ClaimsPrincipal user, Citapp.Shared.DTOs.Cre
     var rawUserId = user.FindFirstValue(ClaimTypes.NameIdentifier) ?? user.FindFirstValue("sub");
     Guid? createdByUserId = Guid.TryParse(rawUserId, out var userId) ? userId : null;
 
-    try { return Results.Created($"/api/bookings/{Guid.NewGuid()}", await svc.CreateAsync(tenantId.Value, dto, createdByUserId)); }
+    try
+    {
+        var created = await svc.CreateAsync(tenantId.Value, dto, createdByUserId);
+        return Results.Created($"/api/bookings/{created.Id}", created);
+    }
     catch (BookingConflictException ex) { return Results.Conflict(new { message = ex.Message }); }
 }).RequireAuthorization();
 

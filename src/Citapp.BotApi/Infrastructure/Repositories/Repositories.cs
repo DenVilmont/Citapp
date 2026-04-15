@@ -80,7 +80,7 @@ public class TenantRepository
     public async Task<TenantBotSettings?> GetBotSettingsAsync(Guid tenantId)
     {
         const string sql = """
-            select id, greeting_text, booking_enabled, timezone
+            select id, about_text, greeting_text, booking_enabled, timezone
             from tenants
             where id = @tenant_id
             limit 1
@@ -99,9 +99,10 @@ public class TenantRepository
 
         return new TenantBotSettings(
             reader.GetGuid(0),
-            reader.GetString(1),
-            reader.GetBoolean(2),
-            reader.GetString(3));
+            reader.IsDBNull(1) ? null : reader.GetString(1),
+            reader.GetString(2),
+            reader.GetBoolean(3),
+            reader.GetString(4));
     }
 
     internal static string ResolveConnectionString(IConfiguration configuration)
@@ -114,7 +115,7 @@ public class TenantRepository
 
 public record TenantSettings(Guid TenantId, string Timezone, int SlotStepMinutes, int DefaultBufferMinutes);
 public record ServiceSnapshot(Guid ServiceId, bool IsActive, int DurationMinutes, decimal PriceAmount, string Currency);
-public record TenantBotSettings(Guid TenantId, string GreetingText, bool BookingEnabled, string Timezone);
+public record TenantBotSettings(Guid TenantId, string? AboutText, string GreetingText, bool BookingEnabled, string Timezone);
 public record ActiveServiceForBot(Guid ServiceId, string Name, int DurationMinutes, decimal PriceAmount, string Currency, bool HasPrimaryImage, string? PrimaryImageUrl);
 
 public class CustomerRepository
@@ -744,6 +745,20 @@ public class ConversationStateRepository
         cmd.Parameters.AddWithValue("tenant_id", tenantId);
         cmd.Parameters.AddWithValue("customer_id", customerId);
         await cmd.ExecuteNonQueryAsync();
+    }
+
+    public async Task<int> DeleteExpiredAsync(DateTimeOffset nowUtc)
+    {
+        const string sql = """
+            delete from conversation_states
+            where expires_at < @now_utc
+            """;
+
+        await using var conn = new NpgsqlConnection(_connectionString);
+        await conn.OpenAsync();
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("now_utc", nowUtc);
+        return await cmd.ExecuteNonQueryAsync();
     }
 }
 

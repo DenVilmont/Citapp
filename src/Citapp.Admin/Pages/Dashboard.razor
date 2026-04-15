@@ -21,21 +21,21 @@ else
         <div><strong>WhatsApp status:</strong> @_waStatus</div>
     </div>
 
-    <h4>Today</h4>
-    <ul>
+        <h4>Today</h4>
+        <ul>
         @foreach (var booking in _today)
         {
-            <li>@booking.StartAt.LocalDateTime:HH:mm - @booking.EndAt.LocalDateTime:HH:mm (@booking.Status)</li>
+            <li>@FormatTimeRange(booking.StartAt, booking.EndAt) (@booking.Status)</li>
         }
-    </ul>
+        </ul>
 
     <h4>Upcoming</h4>
-    <ul>
+        <ul>
         @foreach (var booking in _upcoming)
         {
-            <li>@booking.StartAt.LocalDateTime:yyyy-MM-dd HH:mm (@booking.Status)</li>
+            <li>@FormatDateTime(booking.StartAt):yyyy-MM-dd HH:mm (@booking.Status)</li>
         }
-    </ul>
+        </ul>
 }
 
 @code {
@@ -45,6 +45,7 @@ else
     private int _activeThisWeek;
     private List<BookingDto> _today = new();
     private List<BookingDto> _upcoming = new();
+    private TimeZoneInfo _tenantTimeZone = TimeZoneInfo.Utc;
 
     protected override async Task OnInitializedAsync()
     {
@@ -58,7 +59,10 @@ else
         try
         {
             var tenantId = Session.TenantId.Value;
-            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+            var tenant = await TenantRepository.GetAsync(tenantId);
+            _tenantTimeZone = ResolveTimeZone(tenant?.Timezone);
+
+            var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, _tenantTimeZone).DateTime);
             var endOfWeek = today.AddDays(6 - (int)today.DayOfWeek);
 
             var weekBookings = await BookingRepository.GetForRangeAsync(tenantId, today, endOfWeek, BookingStatus.Booked);
@@ -77,6 +81,33 @@ else
         finally
         {
             _loading = false;
+        }
+    }
+
+    private DateTime FormatDateTime(DateTimeOffset value)
+        => TimeZoneInfo.ConvertTime(value, _tenantTimeZone).DateTime;
+
+    private string FormatTimeRange(DateTimeOffset start, DateTimeOffset end)
+        => $"{FormatDateTime(start):HH:mm} - {FormatDateTime(end):HH:mm}";
+
+    private static TimeZoneInfo ResolveTimeZone(string? timezone)
+    {
+        if (string.IsNullOrWhiteSpace(timezone))
+        {
+            return TimeZoneInfo.Utc;
+        }
+
+        try
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById(timezone);
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            return TimeZoneInfo.Utc;
+        }
+        catch (InvalidTimeZoneException)
+        {
+            return TimeZoneInfo.Utc;
         }
     }
 }
