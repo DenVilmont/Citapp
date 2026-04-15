@@ -77,6 +77,33 @@ public class TenantRepository
             reader.GetInt32(3));
     }
 
+    public async Task<TenantBotSettings?> GetBotSettingsAsync(Guid tenantId)
+    {
+        const string sql = """
+            select id, greeting_text, booking_enabled, timezone
+            from tenants
+            where id = @tenant_id
+            limit 1
+            """;
+
+        await using var conn = new NpgsqlConnection(_connectionString);
+        await conn.OpenAsync();
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("tenant_id", tenantId);
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        if (!await reader.ReadAsync())
+        {
+            return null;
+        }
+
+        return new TenantBotSettings(
+            reader.GetGuid(0),
+            reader.GetString(1),
+            reader.GetBoolean(2),
+            reader.GetString(3));
+    }
+
     internal static string ResolveConnectionString(IConfiguration configuration)
     {
         return configuration["SUPABASE_DB_CONNECTION_STRING"]
@@ -87,6 +114,8 @@ public class TenantRepository
 
 public record TenantSettings(Guid TenantId, string Timezone, int SlotStepMinutes, int DefaultBufferMinutes);
 public record ServiceSnapshot(Guid ServiceId, bool IsActive, int DurationMinutes, decimal PriceAmount, string Currency);
+public record TenantBotSettings(Guid TenantId, string GreetingText, bool BookingEnabled, string Timezone);
+public record ActiveServiceForBot(Guid ServiceId, string Name, int DurationMinutes, decimal PriceAmount, string Currency, bool HasPrimaryImage, string? PrimaryImageUrl);
 
 public class CustomerRepository
 {
@@ -430,6 +459,84 @@ public class ServiceRepository
             reader.GetInt32(2),
             reader.GetDecimal(3),
             reader.GetString(4));
+    }
+
+    public async Task<List<ActiveServiceForBot>> GetActiveForBotAsync(Guid tenantId)
+    {
+        const string sql = """
+            select
+                s.id,
+                s.name,
+                s.duration_minutes,
+                s.price_amount,
+                s.currency,
+                exists(
+                    select 1
+                    from service_media smx
+                    where smx.service_id = s.id and smx.is_primary = true and smx.public_url is not null
+                ) as has_primary_image,
+                (
+                    select sm.public_url
+                    from service_media sm
+                    where sm.service_id = s.id and sm.is_primary = true and sm.public_url is not null
+                    order by sm.sort_order asc
+                    limit 1
+                ) as primary_image_url
+            from services s
+            where s.tenant_id = @tenant_id and s.is_active = true
+            order by s.sort_order asc, s.created_at asc
+            """;
+
+        var items = new List<ActiveServiceForBot>();
+        await using var conn = new NpgsqlConnection(_connectionString);
+        await conn.OpenAsync();
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("tenant_id", tenantId);
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            items.Add(new ActiveServiceForBot(
+                reader.GetGuid(0),
+                reader.GetString(1),
+                reader.GetInt32(2),
+                reader.GetDecimal(3),
+                reader.GetString(4),
+                reader.GetBoolean(5),
+                reader.IsDBNull(6) ? null : reader.GetString(6)));
+        }
+
+        return items;
+    }
+
+    public async Task<Dictionary<Guid, string>> GetNamesByIdsAsync(Guid tenantId, IEnumerable<Guid> serviceIds)
+    {
+        var ids = serviceIds.Distinct().ToArray();
+        if (ids.Length == 0)
+        {
+            return new Dictionary<Guid, string>();
+        }
+
+        const string sql = """
+            select id, name
+            from services
+            where tenant_id = @tenant_id and id = any(@service_ids)
+            """;
+
+        var result = new Dictionary<Guid, string>();
+        await using var conn = new NpgsqlConnection(_connectionString);
+        await conn.OpenAsync();
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("tenant_id", tenantId);
+        cmd.Parameters.AddWithValue("service_ids", ids);
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            result[reader.GetGuid(0)] = reader.GetString(1);
+        }
+
+        return result;
     }
 }
 
