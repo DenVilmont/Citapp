@@ -45,7 +45,7 @@ public class SlotCalculationService
 
         var breaks = (await _schedule.GetBreaksAsync(tenantId)).Where(x => x.DayOfWeek == (int)date.DayOfWeek).ToList();
         var bookings = (await _bookings.GetByDateAsync(tenantId, date))
-            .Where(x => x.Status != Citapp.Shared.Enums.BookingStatus.Cancelled)
+            .Where(x => x.Status is Citapp.Shared.Enums.BookingStatus.Booked or Citapp.Shared.Enums.BookingStatus.BlockedByMaster)
             .ToList();
 
         var occupancyMinutes = service.DurationMinutes + tenant.DefaultBufferMinutes;

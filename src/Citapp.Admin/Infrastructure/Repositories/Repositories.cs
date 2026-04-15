@@ -361,7 +361,7 @@ public class BookingRepository : IBookingRepository
 
         if (status is not null)
         {
-            query = query.Filter("status", Operator.Equals, status.Value.ToString().ToLowerInvariant());
+            query = query.Filter("status", Operator.Equals, ToSnakeCase(status.Value));
         }
 
         var response = await query.Order("start_at", Ordering.Ascending).Get();
@@ -381,8 +381,8 @@ public class BookingRepository : IBookingRepository
 
     private static BookingDto ToDto(BookingRow r)
     {
-        Enum.TryParse<BookingSource>(r.Source, true, out var source);
-        Enum.TryParse<BookingStatus>(r.Status, true, out var status);
+        Enum.TryParse<BookingSource>(NormalizeEnumText(r.Source), true, out var source);
+        Enum.TryParse<BookingStatus>(NormalizeEnumText(r.Status), true, out var status);
         CancelledBy? cancelledBy = null;
         if (!string.IsNullOrWhiteSpace(r.CancelledBy) && Enum.TryParse<CancelledBy>(r.CancelledBy, true, out var parsedCancelled))
         {
@@ -407,6 +407,27 @@ public class BookingRepository : IBookingRepository
             r.CancelledAt,
             r.CreatedAt);
     }
+
+    private static string ToSnakeCase<TEnum>(TEnum value) where TEnum : struct, Enum
+    {
+        var text = value.ToString();
+        var chars = new List<char>(text.Length + 4);
+        for (var i = 0; i < text.Length; i++)
+        {
+            var c = text[i];
+            if (char.IsUpper(c) && i > 0)
+            {
+                chars.Add('_');
+            }
+
+            chars.Add(char.ToLowerInvariant(c));
+        }
+
+        return new string(chars.ToArray());
+    }
+
+    private static string NormalizeEnumText(string value)
+        => value.Replace("_", string.Empty, StringComparison.Ordinal);
 }
 
 public class CustomerRepository : ICustomerRepository

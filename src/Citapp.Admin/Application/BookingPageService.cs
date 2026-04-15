@@ -38,12 +38,18 @@ public sealed class BookingPageService
     public async Task<BookingListData> LoadBookingsAsync(Guid tenantId, string fromText, string toText, string statusText)
     {
         BookingStatus? status = null;
-        if (Enum.TryParse<BookingStatus>(statusText, true, out var parsed))
+        var normalizedStatusText = statusText.Replace("_", string.Empty, StringComparison.Ordinal);
+        if (Enum.TryParse<BookingStatus>(normalizedStatusText, true, out var parsed))
         {
             status = parsed;
         }
 
-        var bookings = await _bookingRepository.GetForRangeAsync(tenantId, DateOnly.Parse(fromText), DateOnly.Parse(toText), status);
+        var statusFilterForRepository = status == BookingStatus.BlockedByMaster ? null : status;
+        var bookings = await _bookingRepository.GetForRangeAsync(tenantId, DateOnly.Parse(fromText), DateOnly.Parse(toText), statusFilterForRepository);
+        if (status == BookingStatus.BlockedByMaster)
+        {
+            bookings = bookings.Where(x => x.Status == BookingStatus.BlockedByMaster).ToList();
+        }
 
         var customerLabels = new Dictionary<Guid, string>();
         var serviceLabels = new Dictionary<Guid, string>();
