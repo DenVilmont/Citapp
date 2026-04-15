@@ -55,6 +55,12 @@ public class BotFsmHandler
         }
 
         var input = ParseInput(messageType, interactiveType, payloadId, textBody);
+        if (ShouldResetToMainMenu(input))
+        {
+            await ShowMainMenuAsync(tenant, tenantId, customerId, waUserId, phoneNumberId);
+            return;
+        }
+
         if (currentState.State == BotState.Idle)
         {
             await ShowMainMenuAsync(tenant, tenantId, customerId, waUserId, phoneNumberId);
@@ -220,6 +226,17 @@ public class BotFsmHandler
             return;
         }
 
+        if (input.PayloadId == "main_menu")
+        {
+            var tenant = await _tenants.GetBotSettingsAsync(tenantId);
+            if (tenant is not null)
+            {
+                await ShowMainMenuAsync(tenant, tenantId, customerId, waUserId, phoneNumberId);
+            }
+
+            return;
+        }
+
         if (input.PayloadId is null || !input.PayloadId.StartsWith("date:", StringComparison.Ordinal))
         {
             await SendDateMenuAsync(tenantId, customerId, payload.ServiceId.Value, waUserId, phoneNumberId);
@@ -252,6 +269,12 @@ public class BotFsmHandler
 
         if (input.PayloadId is null || !input.PayloadId.StartsWith("time:", StringComparison.Ordinal))
         {
+            if (input.PayloadId == "main_menu")
+            {
+                await ShowMainMenuAsync(tenant, tenantId, customerId, waUserId, phoneNumberId);
+                return;
+            }
+
             await SendTimeMenuAsync(tenantId, customerId, payload.ServiceId.Value, payload.Date.Value, waUserId, phoneNumberId);
             return;
         }
@@ -275,14 +298,16 @@ public class BotFsmHandler
 
         var tenantTimezone = ResolveTimeZone(tenant.Timezone);
         var localStart = TimeZoneInfo.ConvertTime(startAt, tenantTimezone);
+        var localEnd = localStart.AddMinutes(service.DurationMinutes);
 
         await _sender.SendButtonsAsync(
             waUserId,
             phoneNumberId,
-            $"Подтвердить запись на {localStart:dd.MM} в {localStart:HH:mm}?",
+            $"Подтвердить запись: {localStart:dd.MM}, {localStart:HH:mm} — {localEnd:HH:mm}?",
             [
                 ("book_yes", "Подтвердить"),
-                ("book_no", "Назад")
+                ("book_no", "Назад"),
+                ("main_menu", "В меню")
             ]);
     }
 
@@ -313,6 +338,12 @@ public class BotFsmHandler
             return;
         }
 
+        if (input.PayloadId == "main_menu")
+        {
+            await ShowMainMenuAsync(tenant, tenantId, customerId, waUserId, phoneNumberId);
+            return;
+        }
+
         if (input.PayloadId != "book_yes")
         {
             await RepeatWithButtonsHintAsync(currentState.State, currentState.Payload, tenantId, customerId, waUserId, phoneNumberId, tenant);
@@ -338,14 +369,23 @@ public class BotFsmHandler
                 await _bookings.CancelAsync(payload.ExistingBookingId.Value, tenantId, CancelledBy.Customer.ToString());
             }
 
+            var service = await _services.GetSnapshotAsync(tenantId, booking.ServiceId);
             var bookingTimezone = ResolveTimeZone(tenant.Timezone);
             var localStart = TimeZoneInfo.ConvertTime(booking.StartAt, bookingTimezone);
-            await _sender.SendTextAsync(waUserId, phoneNumberId, $"Готово ✅ {localStart:dd.MM} в {localStart:HH:mm}");
+            var serviceDuration = service?.DurationMinutes ?? booking.DurationSnapshotMinutes;
+            var localEnd = localStart.AddMinutes(serviceDuration);
+            var serviceName = await ResolveServiceNameAsync(tenantId, booking.ServiceId);
+            var amount = booking.PriceSnapshotAmount.ToString("0.##", CultureInfo.InvariantCulture);
+            var currency = string.IsNullOrWhiteSpace(booking.CurrencySnapshot) ? "RUB" : booking.CurrencySnapshot;
+            await _sender.SendTextAsync(
+                waUserId,
+                phoneNumberId,
+                $"Готово ✅ {serviceName}\n{localStart:dd.MM.yyyy}, {localStart:HH:mm} — {localEnd:HH:mm}\n{amount} {currency}\nМастер/салон: {tenant.BusinessName}");
             await ShowMainMenuAsync(tenant, tenantId, customerId, waUserId, phoneNumberId);
         }
         catch (BookingConflictException)
         {
-            await _sender.SendTextAsync(waUserId, phoneNumberId, "Слот уже занят. Выберите другое время.");
+            await _sender.SendTextAsync(waUserId, phoneNumberId, "Это время уже заняли. Выберите другой слот.");
             await SendTimeMenuAsync(tenantId, customerId, payload.ServiceId.Value, payload.Date.Value, waUserId, phoneNumberId);
         }
     }
@@ -399,6 +439,17 @@ public class BotFsmHandler
         if (input.PayloadId == "cancel_no")
         {
             await SendCancelableBookingsMenuAsync(tenantId, customerId, waUserId, phoneNumberId);
+            return;
+        }
+
+        if (input.PayloadId == "main_menu")
+        {
+            var tenant = await _tenants.GetBotSettingsAsync(tenantId);
+            if (tenant is not null)
+            {
+                await ShowMainMenuAsync(tenant, tenantId, customerId, waUserId, phoneNumberId);
+            }
+
             return;
         }
 
@@ -462,13 +513,25 @@ public class BotFsmHandler
             return;
         }
 
+        if (input.PayloadId == "main_menu")
+        {
+            var tenant = await _tenants.GetBotSettingsAsync(tenantId);
+            if (tenant is not null)
+            {
+                await ShowMainMenuAsync(tenant, tenantId, customerId, waUserId, phoneNumberId);
+            }
+
+            return;
+        }
+
         await _sender.SendButtonsAsync(
             waUserId,
             phoneNumberId,
-            "Используйте кнопки ниже.",
+            "Выберите действие кнопкой.",
             [
                 ("dup_keep", "Оставить"),
-                ("dup_rebook", "Перезаписаться")
+                ("dup_rebook", "Перезаписаться"),
+                ("main_menu", "В меню")
             ]);
     }
 
@@ -490,7 +553,7 @@ public class BotFsmHandler
         var services = await _services.GetActiveForBotAsync(tenantId);
         if (services.Count == 0)
         {
-            await _sender.SendTextAsync(waUserId, phoneNumberId, "Сейчас нет доступных услуг.");
+            await _sender.SendTextAsync(waUserId, phoneNumberId, "Сейчас нет доступных услуг для записи.");
             var tenant = await _tenants.GetBotSettingsAsync(tenantId);
             if (tenant is not null)
             {
@@ -508,6 +571,7 @@ public class BotFsmHandler
                 return ($"svc:{x.ServiceId}", x.Name, $"{marker}{x.DurationMinutes} мин");
             })
             .ToList();
+        AppendMainMenuRow(rows);
 
         await _sender.SendListAsync(waUserId, phoneNumberId, "Выберите услугу", "Услуги", rows);
         await SaveStateAsync(tenantId, customerId, BotState.BookingSelectService, new FsmPayload());
@@ -571,15 +635,18 @@ public class BotFsmHandler
         var duplicate = await _bookings.GetActiveByCustomerAndServiceAsync(tenantId, customerId, serviceId);
         if (duplicate is not null)
         {
-            var svc = await _services.GetSnapshotAsync(tenantId, serviceId);
-            var title = svc is null ? "услуга" : "эта услуга";
+            var serviceName = await ResolveServiceNameAsync(tenantId, serviceId);
+            var tenant = await _tenants.GetBotSettingsAsync(tenantId);
+            var timezone = ResolveTimeZone(tenant?.Timezone);
+            var localStart = TimeZoneInfo.ConvertTime(duplicate.StartAt, timezone);
             await _sender.SendButtonsAsync(
                 waUserId,
                 phoneNumberId,
-                $"У вас уже есть запись на {title}. Что делаем?",
+                $"У вас уже есть запись на {serviceName}: {localStart:dd.MM.yyyy} в {localStart:HH:mm}. Что делаем?",
                 [
                     ("dup_keep", "Оставить"),
-                    ("dup_rebook", "Перезаписаться")
+                    ("dup_rebook", "Перезаписаться"),
+                    ("main_menu", "В меню")
                 ]);
             await SaveStateAsync(tenantId, customerId, BotState.BookingConfirm, new FsmPayload { ServiceId = serviceId, ExistingBookingId = duplicate.Id, DuplicatePrompt = true });
             return;
@@ -593,7 +660,7 @@ public class BotFsmHandler
         var dates = await _slots.GetAvailableDatesAsync(tenantId, serviceId, 30);
         if (dates.Count == 0)
         {
-            await _sender.SendTextAsync(waUserId, phoneNumberId, "Нет доступных дат. Выберите другую услугу.");
+            await _sender.SendTextAsync(waUserId, phoneNumberId, "Нет доступных дат для этой услуги.");
             var tenant = await _tenants.GetBotSettingsAsync(tenantId);
             if (tenant is not null)
             {
@@ -606,6 +673,7 @@ public class BotFsmHandler
         var rows = dates.Take(10)
             .Select(x => ($"date:{x:yyyy-MM-dd}", x.ToString("dd.MM (ddd)", CultureInfo.GetCultureInfo("ru-RU")), ""))
             .ToList();
+        AppendMainMenuRow(rows);
 
         await _sender.SendListAsync(waUserId, phoneNumberId, "Выберите дату", "Даты", rows);
         await SaveStateAsync(tenantId, customerId, BotState.BookingSelectDate, new FsmPayload { ServiceId = serviceId });
@@ -616,7 +684,7 @@ public class BotFsmHandler
         var slots = await _slots.GetAvailableSlotsAsync(tenantId, serviceId, date);
         if (slots.Count == 0)
         {
-            await _sender.SendTextAsync(waUserId, phoneNumberId, "На эту дату нет времени. Выберите другую дату.");
+            await _sender.SendTextAsync(waUserId, phoneNumberId, "На эту дату нет свободного времени. Выберите другую дату.");
             await SendDateMenuAsync(tenantId, customerId, serviceId, waUserId, phoneNumberId);
             return;
         }
@@ -624,6 +692,7 @@ public class BotFsmHandler
         var rows = slots.Take(10)
             .Select(x => ($"time:{x.StartAt.UtcDateTime:O}", x.Label, ""))
             .ToList();
+        AppendMainMenuRow(rows);
 
         await _sender.SendListAsync(waUserId, phoneNumberId, "Выберите время", "Время", rows);
         var previous = await LoadStateAsync(tenantId, customerId);
@@ -667,6 +736,7 @@ public class BotFsmHandler
                 return ($"cancel:{x.Id}", $"{localStart:dd.MM HH:mm}", serviceName);
             })
             .ToList();
+        AppendMainMenuRow(rows);
 
         await _sender.SendListAsync(waUserId, phoneNumberId, "Выберите запись для отмены", "Записи", rows);
         await SaveStateAsync(tenantId, customerId, BotState.CancelSelectBooking, new FsmPayload());
@@ -723,10 +793,11 @@ public class BotFsmHandler
                     await _sender.SendButtonsAsync(
                         waUserId,
                         phoneNumberId,
-                        "Используйте кнопки ниже.",
+                        "Выберите действие кнопкой.",
                         [
                             ("dup_keep", "Оставить"),
-                            ("dup_rebook", "Перезаписаться")
+                            ("dup_rebook", "Перезаписаться"),
+                            ("main_menu", "В меню")
                         ]);
                 }
                 else
@@ -737,7 +808,8 @@ public class BotFsmHandler
                         "Подтвердите запись кнопкой.",
                         [
                             ("book_yes", "Подтвердить"),
-                            ("book_no", "Назад")
+                            ("book_no", "Назад"),
+                            ("main_menu", "В меню")
                         ]);
                 }
 
@@ -753,7 +825,8 @@ public class BotFsmHandler
                     "Подтвердите отмену кнопкой.",
                     [
                         ("cancel_yes", "Да"),
-                        ("cancel_no", "Нет")
+                        ("cancel_no", "Нет"),
+                        ("main_menu", "В меню")
                     ]);
                 break;
             default:
@@ -828,6 +901,38 @@ public class BotFsmHandler
     {
         var isInteractive = messageType == "interactive" && (interactiveType == "button_reply" || interactiveType == "list_reply");
         return new UserInput(isInteractive, payloadId, textBody);
+    }
+
+    private static bool ShouldResetToMainMenu(UserInput input)
+    {
+        if (input.IsInteractive && input.PayloadId == "main_menu")
+        {
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(input.TextBody))
+        {
+            return false;
+        }
+
+        var normalized = input.TextBody.Trim().ToLowerInvariant();
+        return normalized is "start" or "/start" or "menu" or "меню" or "reset" or "сброс" or "заново";
+    }
+
+    private void AppendMainMenuRow(List<(string Id, string Title, string Description)> rows)
+    {
+        if (rows.Count >= 10)
+        {
+            return;
+        }
+
+        rows.Add(("main_menu", "🏠 В главное меню", ""));
+    }
+
+    private async Task<string> ResolveServiceNameAsync(Guid tenantId, Guid serviceId)
+    {
+        var names = await _services.GetNamesByIdsAsync(tenantId, [serviceId]);
+        return names.GetValueOrDefault(serviceId, "Услуга");
     }
 
     private static FsmPayload Deserialize(string? payloadJson)

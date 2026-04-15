@@ -265,7 +265,8 @@ public class BookingTransactionService
 
             var localStart = TimeZoneInfo.ConvertTime(cursor, timezone);
             var localEnd = TimeZoneInfo.ConvertTime(candidateEnd, timezone);
-            slots.Add(new TimeSlot(localStart, localEnd, localStart.ToString("HH:mm")));
+            var clientEnd = localStart.AddMinutes(service.DurationMinutes);
+            slots.Add(new TimeSlot(localStart, localEnd, $"{localStart:HH:mm} — {clientEnd:HH:mm}"));
         }
 
         return slots;
