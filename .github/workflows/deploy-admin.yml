@@ -15,6 +15,20 @@ jobs:
         with:
           dotnet-version: '10.0.x'
       - run: dotnet publish src/Citapp.Admin -c Release -o publish
+      - name: Write runtime config
+        run: |
+          cat > publish/wwwroot/appsettings.runtime.json <<'JSON'
+          {
+            "Supabase": {
+              "Url": "${{ vars.SUPABASE_URL }}",
+              "AnonKey": "${{ vars.SUPABASE_ANON_KEY }}",
+              "ServiceMediaBucket": "${{ vars.SUPABASE_SERVICE_MEDIA_BUCKET }}"
+            },
+            "BotApi": {
+              "BaseUrl": "${{ vars.BOTAPI_BASE_URL }}"
+            }
+          }
+          JSON
       - uses: actions/upload-pages-artifact@v3
         with:
           path: publish/wwwroot

@@ -76,7 +76,7 @@ public class BotFsmHandler
                 await HandleSelectDateAsync(input, currentState, tenantId, customerId, waUserId, phoneNumberId);
                 break;
             case BotState.BookingSelectTime:
-                await HandleSelectTimeAsync(input, currentState, tenantId, customerId, waUserId, phoneNumberId);
+                await HandleSelectTimeAsync(input, currentState, tenant, tenantId, customerId, waUserId, phoneNumberId);
                 break;
             case BotState.BookingConfirm:
                 await HandleBookingConfirmAsync(input, currentState, tenant, tenantId, customerId, waUserId, phoneNumberId);
@@ -235,7 +235,7 @@ public class BotFsmHandler
         await SendTimeMenuAsync(tenantId, customerId, payload.ServiceId.Value, date, waUserId, phoneNumberId);
     }
 
-    private async Task HandleSelectTimeAsync(UserInput input, ConversationSnapshot currentState, Guid tenantId, Guid customerId, string waUserId, string phoneNumberId)
+    private async Task HandleSelectTimeAsync(UserInput input, ConversationSnapshot currentState, TenantBotSettings tenant, Guid tenantId, Guid customerId, string waUserId, string phoneNumberId)
     {
         var payload = Deserialize(currentState.Payload);
         if (payload.ServiceId is null || payload.Date is null)
