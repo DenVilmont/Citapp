@@ -31,6 +31,7 @@ public class SlotCalculationService
         }
 
         var timezone = TimeZoneInfo.FindSystemTimeZoneById(tenant.Timezone);
+        var nowUtc = DateTimeOffset.UtcNow;
         var weekly = await _schedule.GetWeeklyAsync(tenantId);
         var day = weekly.FirstOrDefault(x => x.DayOfWeek == (int)date.DayOfWeek);
         if (day is null || !day.IsWorkingDay) return new();
@@ -66,6 +67,11 @@ public class SlotCalculationService
         {
             var candidateStart = cursor;
             var candidateEnd = candidateStart.Add(occupied);
+            if (candidateStart <= nowUtc)
+            {
+                continue;
+            }
+
             if (intervals.Any(x => Intersects(candidateStart, candidateEnd, x.StartUtc, x.EndUtc)))
             {
                 continue;
