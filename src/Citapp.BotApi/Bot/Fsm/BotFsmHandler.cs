@@ -46,8 +46,11 @@ public class BotFsmHandler
         var currentState = await LoadStateAsync(tenantId, customerId);
         if (!tenant.BookingEnabled)
         {
-            await _sender.SendTextAsync(waUserId, phoneNumberId, "Онлайн-запись сейчас недоступна.");
-            await SaveStateAsync(tenantId, customerId, BotState.Idle, null);
+            var unavailableMessage = string.IsNullOrWhiteSpace(tenant.AboutText)
+                ? "Онлайн-запись сейчас недоступна."
+                : tenant.AboutText;
+            await _sender.SendTextAsync(waUserId, phoneNumberId, unavailableMessage);
+            await SaveStateAsync(tenantId, customerId, BotState.MainMenu, null);
             return;
         }
 
@@ -483,7 +486,12 @@ public class BotFsmHandler
         if (services.Count == 0)
         {
             await _sender.SendTextAsync(waUserId, phoneNumberId, "Сейчас нет доступных услуг.");
-            await SaveStateAsync(tenantId, customerId, BotState.MainMenu, null);
+            var tenant = await _tenants.GetBotSettingsAsync(tenantId);
+            if (tenant is not null)
+            {
+                await ShowMainMenuAsync(tenant, tenantId, customerId, waUserId, phoneNumberId);
+            }
+
             return;
         }
 
@@ -581,7 +589,12 @@ public class BotFsmHandler
         if (dates.Count == 0)
         {
             await _sender.SendTextAsync(waUserId, phoneNumberId, "Нет доступных дат. Выберите другую услугу.");
-            await SendServicesMenuAsync(tenantId, customerId, waUserId, phoneNumberId);
+            var tenant = await _tenants.GetBotSettingsAsync(tenantId);
+            if (tenant is not null)
+            {
+                await ShowMainMenuAsync(tenant, tenantId, customerId, waUserId, phoneNumberId);
+            }
+
             return;
         }
 

@@ -4,6 +4,7 @@
 @inject ICustomerRepository CustomerRepository
 @inject IBookingRepository BookingRepository
 @inject IServiceRepository ServiceRepository
+@inject ITenantRepository TenantRepository
 @inject NavigationManager Nav
 
 <h3>Customer card</h3>
@@ -51,8 +52,8 @@ else
         @foreach (var booking in _history)
         {
             <tr>
-                <td>@booking.Date</td>
-                <td>@booking.StartAt.LocalDateTime:HH\:mm - @booking.EndAt.LocalDateTime:HH\:mm</td>
+                <td>@FormatDateTime(booking.StartAt):yyyy-MM-dd</td>
+                <td>@FormatTimeRange(booking.StartAt, booking.EndAt)</td>
                 <td>@booking.Status</td>
                 <td>@booking.Source</td>
                 <td>@ResolveServiceLabel(booking.ServiceId)</td>
@@ -73,6 +74,7 @@ else
     private readonly Dictionary<Guid, string> _serviceLabels = new();
     private string _masterNote = string.Empty;
     private string _error = string.Empty;
+    private TimeZoneInfo _tenantTimeZone = TimeZoneInfo.Utc;
 
     protected override async Task OnInitializedAsync()
     {
@@ -82,6 +84,9 @@ else
             Nav.NavigateTo("/login", true);
             return;
         }
+
+        var tenant = await TenantRepository.GetAsync(Session.TenantId.Value);
+        _tenantTimeZone = ResolveTimeZone(tenant?.Timezone);
     }
 
     protected override async Task OnParametersSetAsync()
@@ -132,4 +137,31 @@ else
 
     private string ResolveServiceLabel(Guid serviceId)
         => _serviceLabels.TryGetValue(serviceId, out var label) ? label : serviceId.ToString();
+
+    private DateTime FormatDateTime(DateTimeOffset value)
+        => TimeZoneInfo.ConvertTime(value, _tenantTimeZone).DateTime;
+
+    private string FormatTimeRange(DateTimeOffset start, DateTimeOffset end)
+        => $"{FormatDateTime(start):HH:mm} - {FormatDateTime(end):HH:mm}";
+
+    private static TimeZoneInfo ResolveTimeZone(string? timezone)
+    {
+        if (string.IsNullOrWhiteSpace(timezone))
+        {
+            return TimeZoneInfo.Utc;
+        }
+
+        try
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById(timezone);
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            return TimeZoneInfo.Utc;
+        }
+        catch (InvalidTimeZoneException)
+        {
+            return TimeZoneInfo.Utc;
+        }
+    }
 }
