@@ -37,6 +37,7 @@ builder.Services.AddScoped<TenantRepository>();
 builder.Services.AddScoped<CustomerRepository>();
 builder.Services.AddScoped<BookingRepository>();
 builder.Services.AddScoped<ScheduleRepository>();
+builder.Services.AddScoped<ServiceRepository>();
 builder.Services.AddScoped<ConversationStateRepository>();
 builder.Services.AddScoped<WebhookEventRepository>();
 builder.Services.AddScoped<AuthenticatedTenantResolver>();
@@ -88,13 +89,20 @@ app.MapPost("/api/bookings", async (ClaimsPrincipal user, Citapp.Shared.DTOs.Cre
     catch (BookingConflictException ex) { return Results.Conflict(new { message = ex.Message }); }
 }).RequireAuthorization();
 
-app.MapPut("/api/bookings/{id:guid}/status", async (ClaimsPrincipal user, Guid id, string status, AuthenticatedTenantResolver tenantResolver, BookingRepository repo) =>
+app.MapPut("/api/bookings/{id:guid}/status", async (ClaimsPrincipal user, Guid id, string status, AuthenticatedTenantResolver tenantResolver, BookingTransactionService svc) =>
 {
     var tenantId = await tenantResolver.ResolveTenantIdAsync(user);
     if (tenantId is null) return Results.Forbid();
 
-    await repo.UpdateStatusAsync(id, tenantId.Value, status);
-    return Results.NoContent();
+    try
+    {
+        await svc.UpdateStatusAsync(tenantId.Value, id, status);
+        return Results.NoContent();
+    }
+    catch (BookingConflictException ex)
+    {
+        return Results.Conflict(new { message = ex.Message });
+    }
 }).RequireAuthorization();
 
 app.Run();
