@@ -1,2 +1,46 @@
 @inherits LayoutComponentBase
-<div class="page">@Body</div>
+@inject NavigationManager Nav
+@inject AdminSession Session
+
+<div class="shell">
+    @if (ShowNav)
+    {
+        <aside class="menu">
+            <h3>Citapp Admin</h3>
+            <nav>
+                <a href="/dashboard">Dashboard</a>
+                <a href="/profile">Profile</a>
+                <a href="/servicelist">Services</a>
+                <a href="/schedule">Schedule</a>
+                <a href="/bookingcalendar">Bookings</a>
+                <a href="/customerlist">Customers</a>
+            </nav>
+            <button @onclick="Logout">Logout</button>
+        </aside>
+    }
+    <main class="content">@Body</main>
+</div>
+
+<style>
+    .shell { display: flex; min-height: 100vh; font-family: sans-serif; }
+    .menu { width: 220px; background: #f5f5f5; padding: 16px; }
+    .menu nav { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+    .menu a { text-decoration: none; }
+    .content { flex: 1; padding: 20px; }
+    table { border-collapse: collapse; width: 100%; }
+    td, th { border: 1px solid #ddd; padding: 8px; text-align: left; }
+    input, select, textarea, button { margin: 4px 0; padding: 6px; }
+    .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+</style>
+
+@code {
+    private bool ShowNav => !Nav.Uri.EndsWith("/", StringComparison.OrdinalIgnoreCase)
+                            && !Nav.Uri.EndsWith("/login", StringComparison.OrdinalIgnoreCase)
+                            && !Nav.Uri.EndsWith("/register", StringComparison.OrdinalIgnoreCase);
+
+    private async Task Logout()
+    {
+        await Session.LogoutAsync();
+        Nav.NavigateTo("/login", true);
+    }
+}

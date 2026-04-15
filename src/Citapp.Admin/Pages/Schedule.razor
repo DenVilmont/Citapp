@@ -1,2 +1,175 @@
 @page "/schedule"
+@inject AdminSession Session
+@inject IScheduleRepository ScheduleRepository
+@inject NavigationManager Nav
+
 <h3>Schedule</h3>
+
+@if (!string.IsNullOrWhiteSpace(_message))
+{
+    <p>@_message</p>
+}
+@if (!string.IsNullOrWhiteSpace(_error))
+{
+    <p style="color:red">@_error</p>
+}
+
+<h4>Weekly hours</h4>
+<table>
+    <thead><tr><th>Day</th><th>Working</th><th>Start</th><th>End</th><th></th></tr></thead>
+    <tbody>
+    @foreach (var day in _week)
+    {
+        <tr>
+            <td>@DayName(day.DayOfWeek)</td>
+            <td><input type="checkbox" @bind="day.IsWorkingDay" /></td>
+            <td><input type="time" @bind="day.StartText" /></td>
+            <td><input type="time" @bind="day.EndText" /></td>
+            <td><button @onclick="() => SaveDayAsync(day)">Save</button></td>
+        </tr>
+    }
+    </tbody>
+</table>
+
+<h4>Fixed breaks</h4>
+<div class="row">
+    <select @bind="_breakDay">@for (var i = 0; i < 7; i++) { <option value="@i">@DayName(i)</option> }</select>
+    <input type="time" @bind="_breakStart" />
+    <input type="time" @bind="_breakEnd" />
+    <input @bind="_breakLabel" placeholder="Label" />
+    <button @onclick="AddBreakAsync">Add break</button>
+</div>
+<ul>
+    @foreach (var b in _breaks)
+    {
+        <li>@DayName(b.DayOfWeek) @b.StartTime-@b.EndTime @b.Label <button @onclick="() => DeleteBreakAsync(b.Id)">Delete</button></li>
+    }
+</ul>
+
+<h4>Blocked dates</h4>
+<div class="row">
+    <input type="date" @bind="_blockedDate" />
+    <input type="time" @bind="_blockedStart" />
+    <input type="time" @bind="_blockedEnd" />
+    <input @bind="_blockedReason" placeholder="Reason" />
+    <button @onclick="AddBlockedDateAsync">Add blocked date</button>
+</div>
+<ul>
+    @foreach (var b in _blocked)
+    {
+        <li>@b.Date @b.StartTime-@b.EndTime @b.Reason <button @onclick="() => DeleteBlockedAsync(b.Id)">Delete</button></li>
+    }
+</ul>
+
+@code {
+    private readonly List<WorkingDayVm> _week = Enumerable.Range(0, 7).Select(i => new WorkingDayVm(i)).ToList();
+    private List<FixedBreakDto> _breaks = new();
+    private List<BlockedDateDto> _blocked = new();
+    private string _error = string.Empty;
+    private string _message = string.Empty;
+
+    private int _breakDay;
+    private string _breakStart = "12:00";
+    private string _breakEnd = "13:00";
+    private string _breakLabel = string.Empty;
+
+    private string _blockedDate = DateTime.UtcNow.Date.ToString("yyyy-MM-dd");
+    private string _blockedStart = string.Empty;
+    private string _blockedEnd = string.Empty;
+    private string _blockedReason = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Session.InitializeAsync();
+        if (!Session.IsAuthenticated || Session.TenantId is null)
+        {
+            Nav.NavigateTo("/login", true);
+            return;
+        }
+
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        var weekly = await ScheduleRepository.GetWeeklyAsync(Session.TenantId!.Value);
+        foreach (var day in _week)
+        {
+            var existing = weekly.FirstOrDefault(x => x.DayOfWeek == day.DayOfWeek);
+            if (existing is null) continue;
+            day.IsWorkingDay = existing.IsWorkingDay;
+            day.StartText = existing.StartTime.ToString("HH:mm");
+            day.EndText = existing.EndTime.ToString("HH:mm");
+        }
+
+        _breaks = await ScheduleRepository.GetBreaksAsync(Session.TenantId.Value);
+        var from = DateOnly.FromDateTime(DateTime.UtcNow.Date);
+        _blocked = await ScheduleRepository.GetBlockedAsync(Session.TenantId.Value, from, from.AddDays(120));
+    }
+
+    private async Task SaveDayAsync(WorkingDayVm day)
+    {
+        try
+        {
+            await ScheduleRepository.UpsertWorkingDayAsync(
+                Session.TenantId!.Value,
+                day.DayOfWeek,
+                TimeOnly.Parse(day.StartText),
+                TimeOnly.Parse(day.EndText),
+                day.IsWorkingDay);
+            _message = "Day saved.";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task AddBreakAsync()
+    {
+        await ScheduleRepository.AddBreakAsync(Session.TenantId!.Value, _breakDay, TimeOnly.Parse(_breakStart), TimeOnly.Parse(_breakEnd), _breakLabel);
+        _breakLabel = string.Empty;
+        await ReloadAsync();
+    }
+
+    private async Task DeleteBreakAsync(Guid id)
+    {
+        await ScheduleRepository.DeleteBreakAsync(Session.TenantId!.Value, id);
+        await ReloadAsync();
+    }
+
+    private async Task AddBlockedDateAsync()
+    {
+        var date = DateOnly.Parse(_blockedDate);
+        TimeOnly? start = string.IsNullOrWhiteSpace(_blockedStart) ? null : TimeOnly.Parse(_blockedStart);
+        TimeOnly? end = string.IsNullOrWhiteSpace(_blockedEnd) ? null : TimeOnly.Parse(_blockedEnd);
+
+        await ScheduleRepository.AddBlockedDateAsync(Session.TenantId!.Value, date, start, end, _blockedReason);
+        _blockedReason = string.Empty;
+        _blockedStart = string.Empty;
+        _blockedEnd = string.Empty;
+        await ReloadAsync();
+    }
+
+    private async Task DeleteBlockedAsync(Guid id)
+    {
+        await ScheduleRepository.DeleteBlockedDateAsync(Session.TenantId!.Value, id);
+        await ReloadAsync();
+    }
+
+    private static string DayName(int day) => Enum.GetName(typeof(DayOfWeek), day) ?? day.ToString();
+
+    private class WorkingDayVm
+    {
+        public WorkingDayVm(int dayOfWeek)
+        {
+            DayOfWeek = dayOfWeek;
+            IsWorkingDay = dayOfWeek is not 0 and not 6;
+        }
+
+        public int DayOfWeek { get; }
+        public bool IsWorkingDay { get; set; }
+        public string StartText { get; set; } = "09:00";
+        public string EndText { get; set; } = "18:00";
+    }
+}

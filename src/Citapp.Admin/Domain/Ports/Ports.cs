@@ -1,51 +1,55 @@
 using Citapp.Shared.DTOs;
+using Citapp.Shared.Enums;
 
 namespace Citapp.Admin.Domain.Ports;
 
 public interface IServiceRepository
 {
-    Task<List<ServiceDto>> GetActiveAsync(Guid tenantId);
+    Task<List<ServiceDto>> GetAllAsync(Guid tenantId);
     Task<ServiceDto?> GetByIdAsync(Guid id, Guid tenantId);
-    Task<ServiceDto> CreateAsync(object dto, Guid tenantId);
-    Task<ServiceDto> UpdateAsync(Guid id, object dto, Guid tenantId);
+    Task<ServiceDto> CreateAsync(ServiceDto dto, Guid tenantId);
+    Task<ServiceDto> UpdateAsync(Guid id, ServiceDto dto, Guid tenantId);
+    Task SetActiveAsync(Guid id, Guid tenantId, bool isActive);
 }
 
 public interface IBookingRepository
 {
-    Task<List<BookingDto>> GetByDateAsync(Guid tenantId, DateOnly date);
-    Task<List<BookingDto>> GetFutureByCustomerAsync(Guid tenantId, Guid customerId);
-    Task<BookingDto?> GetActiveByCustomerAndServiceAsync(Guid tenantId, Guid customerId, Guid serviceId);
-    Task<BookingDto> CreateAsync(CreateBookingDto dto);
-    Task CancelAsync(Guid id, Guid tenantId, string cancelledBy);
-    Task UpdateStatusAsync(Guid id, Guid tenantId, string status);
+    Task<List<BookingDto>> GetUpcomingAsync(Guid tenantId, DateTimeOffset fromUtc);
+    Task<List<BookingDto>> GetForRangeAsync(Guid tenantId, DateOnly from, DateOnly to, BookingStatus? status);
 }
 
 public interface ICustomerRepository
 {
-    Task<CustomerDto?> GetByWaUserIdAsync(Guid tenantId, string waUserId);
-    Task<CustomerDto> GetOrCreateAsync(Guid tenantId, string waUserId, string displayName);
     Task<List<CustomerDto>> SearchAsync(Guid tenantId, string query);
+    Task<CustomerDto?> GetByIdAsync(Guid tenantId, Guid customerId);
     Task UpdateNoteAsync(Guid id, Guid tenantId, string note);
-    Task UpdateLastSeenAsync(Guid id, Guid tenantId);
 }
 
 public interface IScheduleRepository
 {
     Task<List<WorkingHoursDto>> GetWeeklyAsync(Guid tenantId);
-    Task<List<FixedBreakDto>> GetBreaksAsync(Guid tenantId);
-    Task<List<BlockedDateDto>> GetBlockedAsync(Guid tenantId, DateOnly from, DateOnly to);
-}
+    Task UpsertWorkingDayAsync(Guid tenantId, int dayOfWeek, TimeOnly startTime, TimeOnly endTime, bool isWorkingDay);
 
-public interface IConversationStateRepository
-{
-    Task<ConversationStateDto?> GetAsync(Guid tenantId, Guid customerId);
-    Task UpsertAsync(ConversationStateDto state);
-    Task DeleteAsync(Guid tenantId, Guid customerId);
+    Task<List<FixedBreakDto>> GetBreaksAsync(Guid tenantId);
+    Task<FixedBreakDto> AddBreakAsync(Guid tenantId, int dayOfWeek, TimeOnly startTime, TimeOnly endTime, string? label);
+    Task DeleteBreakAsync(Guid tenantId, Guid breakId);
+
+    Task<List<BlockedDateDto>> GetBlockedAsync(Guid tenantId, DateOnly from, DateOnly to);
+    Task<BlockedDateDto> AddBlockedDateAsync(Guid tenantId, DateOnly date, TimeOnly? startTime, TimeOnly? endTime, string? reason);
+    Task DeleteBlockedDateAsync(Guid tenantId, Guid blockedDateId);
 }
 
 public interface ITenantRepository
 {
-    Task<TenantDto?> GetAsync(Guid tenantId);
     Task<TenantDto?> GetByOwnerAsync(Guid ownerUserId);
+    Task<TenantDto?> GetAsync(Guid tenantId);
+    Task<TenantDto> UpsertDefaultTenantAsync(Guid ownerUserId, string email);
     Task<TenantDto> UpdateAsync(Guid tenantId, TenantDto dto);
+    Task<WhatsAppConnectionDto?> GetWhatsAppConnectionAsync(Guid tenantId);
+}
+
+public interface IProfileRepository
+{
+    Task<ProfileDto?> GetAsync(Guid userId);
+    Task<ProfileDto> UpsertAsync(ProfileDto dto);
 }

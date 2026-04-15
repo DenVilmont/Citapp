@@ -1,2 +1,8 @@
 @page "/serviceedit"
-<h3>ServiceEdit</h3>
+@inject NavigationManager Nav
+
+<p>Use Services page.</p>
+
+@code {
+    protected override void OnInitialized() => Nav.NavigateTo("/servicelist", true);
+}

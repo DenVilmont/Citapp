@@ -1,2 +1,8 @@
 @page "/bookingcreate"
-<h3>BookingCreate</h3>
+@inject NavigationManager Nav
+
+<p>Use Bookings page.</p>
+
+@code {
+    protected override void OnInitialized() => Nav.NavigateTo("/bookingcalendar", true);
+}

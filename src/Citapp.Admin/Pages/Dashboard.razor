@@ -1,2 +1,82 @@
 @page "/dashboard"
+@inject AdminSession Session
+@inject ITenantRepository TenantRepository
+@inject IBookingRepository BookingRepository
+@inject NavigationManager Nav
+
 <h3>Dashboard</h3>
+
+@if (_loading)
+{
+    <p>Loading...</p>
+}
+else if (!string.IsNullOrWhiteSpace(_error))
+{
+    <p style="color:red">@_error</p>
+}
+else
+{
+    <div class="row">
+        <div><strong>This week active bookings:</strong> @_activeThisWeek</div>
+        <div><strong>WhatsApp status:</strong> @_waStatus</div>
+    </div>
+
+    <h4>Today</h4>
+    <ul>
+        @foreach (var booking in _today)
+        {
+            <li>@booking.StartAt.LocalDateTime:HH:mm - @booking.EndAt.LocalDateTime:HH:mm (@booking.Status)</li>
+        }
+    </ul>
+
+    <h4>Upcoming</h4>
+    <ul>
+        @foreach (var booking in _upcoming)
+        {
+            <li>@booking.StartAt.LocalDateTime:yyyy-MM-dd HH:mm (@booking.Status)</li>
+        }
+    </ul>
+}
+
+@code {
+    private bool _loading = true;
+    private string _error = string.Empty;
+    private string _waStatus = "not connected";
+    private int _activeThisWeek;
+    private List<BookingDto> _today = new();
+    private List<BookingDto> _upcoming = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Session.InitializeAsync();
+        if (!Session.IsAuthenticated || Session.TenantId is null)
+        {
+            Nav.NavigateTo("/login", true);
+            return;
+        }
+
+        try
+        {
+            var tenantId = Session.TenantId.Value;
+            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+            var endOfWeek = today.AddDays(6 - (int)today.DayOfWeek);
+
+            var weekBookings = await BookingRepository.GetForRangeAsync(tenantId, today, endOfWeek, BookingStatus.Booked);
+            _activeThisWeek = weekBookings.Count;
+
+            _today = (await BookingRepository.GetForRangeAsync(tenantId, today, today, null)).OrderBy(x => x.StartAt).ToList();
+            _upcoming = (await BookingRepository.GetUpcomingAsync(tenantId, DateTimeOffset.UtcNow)).Take(10).ToList();
+
+            var wa = await TenantRepository.GetWhatsAppConnectionAsync(tenantId);
+            _waStatus = wa is null ? "not connected" : $"{wa.Status} ({wa.PhoneNumber})";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}
