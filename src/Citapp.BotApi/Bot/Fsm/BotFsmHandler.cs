@@ -50,7 +50,7 @@ public class BotFsmHandler
                 ? "Онлайн-запись сейчас недоступна."
                 : tenant.AboutText;
             await _sender.SendTextAsync(waUserId, phoneNumberId, unavailableMessage);
-            await SaveStateAsync(tenantId, customerId, BotState.MainMenu, null);
+            await _states.DeleteAsync(tenantId, customerId);
             return;
         }
 
@@ -273,10 +273,13 @@ public class BotFsmHandler
         var confirmPayload = payload with { StartAt = startAt.ToUniversalTime(), EndAt = endAt };
         await SaveStateAsync(tenantId, customerId, BotState.BookingConfirm, confirmPayload);
 
+        var tenantTimezone = ResolveTimeZone(tenant.Timezone);
+        var localStart = TimeZoneInfo.ConvertTime(startAt, tenantTimezone);
+
         await _sender.SendButtonsAsync(
             waUserId,
             phoneNumberId,
-            $"Подтвердить запись на {payload.Date:dd.MM} в {startAt:HH:mm}?",
+            $"Подтвердить запись на {localStart:dd.MM} в {localStart:HH:mm}?",
             [
                 ("book_yes", "Подтвердить"),
                 ("book_no", "Назад")
@@ -335,7 +338,9 @@ public class BotFsmHandler
                 await _bookings.CancelAsync(payload.ExistingBookingId.Value, tenantId, CancelledBy.Customer.ToString());
             }
 
-            await _sender.SendTextAsync(waUserId, phoneNumberId, $"Готово ✅ {booking.Date:dd.MM} в {booking.StartAt:HH:mm}");
+            var bookingTimezone = ResolveTimeZone(tenant.Timezone);
+            var localStart = TimeZoneInfo.ConvertTime(booking.StartAt, bookingTimezone);
+            await _sender.SendTextAsync(waUserId, phoneNumberId, $"Готово ✅ {localStart:dd.MM} в {localStart:HH:mm}");
             await ShowMainMenuAsync(tenant, tenantId, customerId, waUserId, phoneNumberId);
         }
         catch (BookingConflictException)
@@ -652,11 +657,14 @@ public class BotFsmHandler
         }
 
         var serviceNames = await _services.GetNamesByIdsAsync(tenantId, futureBooked.Select(x => x.ServiceId));
+        var tenant = await _tenants.GetBotSettingsAsync(tenantId);
+        var timezone = ResolveTimeZone(tenant?.Timezone);
         var rows = futureBooked.Take(10)
             .Select(x =>
             {
                 var serviceName = serviceNames.GetValueOrDefault(x.ServiceId, "Услуга");
-                return ($"cancel:{x.Id}", $"{x.StartAt:dd.MM HH:mm}", serviceName);
+                var localStart = TimeZoneInfo.ConvertTime(x.StartAt, timezone);
+                return ($"cancel:{x.Id}", $"{localStart:dd.MM HH:mm}", serviceName);
             })
             .ToList();
 
@@ -793,6 +801,27 @@ public class BotFsmHandler
             now.Add(StateTtl));
 
         await _states.UpsertAsync(entity);
+    }
+
+    private static TimeZoneInfo ResolveTimeZone(string? timezone)
+    {
+        if (string.IsNullOrWhiteSpace(timezone))
+        {
+            return TimeZoneInfo.Utc;
+        }
+
+        try
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById(timezone);
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            return TimeZoneInfo.Utc;
+        }
+        catch (InvalidTimeZoneException)
+        {
+            return TimeZoneInfo.Utc;
+        }
     }
 
     private static UserInput ParseInput(string messageType, string? interactiveType, string? payloadId, string? textBody)

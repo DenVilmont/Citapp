@@ -37,6 +37,7 @@ else
     </div>
 
     <h4>Booking history</h4>
+    <p style="margin-top:0; color:#555;">Times shown in @_tenantTimeZone.Id</p>
     <table>
         <thead>
         <tr>
@@ -52,7 +53,7 @@ else
         @foreach (var booking in _history)
         {
             <tr>
-                <td>@FormatDateTime(booking.StartAt):yyyy-MM-dd</td>
+                <td>@FormatDateTime(booking.StartAt).ToString("yyyy-MM-dd")</td>
                 <td>@FormatTimeRange(booking.StartAt, booking.EndAt)</td>
                 <td>@booking.Status</td>
                 <td>@booking.Source</td>
