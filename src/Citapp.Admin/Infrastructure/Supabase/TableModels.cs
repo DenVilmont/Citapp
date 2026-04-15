@@ -57,6 +57,18 @@ public class ServiceRow : BaseModel
     [Column("created_at")] public DateTimeOffset CreatedAt { get; set; }
 }
 
+
+[Table("service_media")]
+public class ServiceMediaRow : BaseModel
+{
+    [PrimaryKey("id", false)] public Guid Id { get; set; }
+    [Column("service_id")] public Guid ServiceId { get; set; }
+    [Column("storage_path")] public string StoragePath { get; set; } = string.Empty;
+    [Column("public_url")] public string? PublicUrl { get; set; }
+    [Column("is_primary")] public bool IsPrimary { get; set; }
+    [Column("sort_order")] public int SortOrder { get; set; }
+}
+
 [Table("weekly_working_hours")]
 public class WorkingHoursRow : BaseModel
 {
