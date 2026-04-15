@@ -3,63 +3,87 @@
 @inject SchedulePageService SchedulePageService
 @inject NavigationManager Nav
 
-<h3>Schedule</h3>
+<MudText Typo="Typo.h4" Class="mb-4">Schedule</MudText>
 
 @if (!string.IsNullOrWhiteSpace(_message))
 {
-    <p>@_message</p>
+    <MudAlert Severity="Severity.Success" Dense="true" Class="mb-3">@_message</MudAlert>
 }
 @if (!string.IsNullOrWhiteSpace(_error))
 {
-    <p style="color:red">@_error</p>
+    <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3">@_error</MudAlert>
 }
 
-<h4>Weekly hours</h4>
-<table>
-    <thead><tr><th>Day</th><th>Working</th><th>Start</th><th>End</th><th></th></tr></thead>
-    <tbody>
-    @foreach (var day in _week)
-    {
-        <tr>
-            <td>@DayName(day.DayOfWeek)</td>
-            <td><input type="checkbox" @bind="day.IsWorkingDay" /></td>
-            <td><input type="time" @bind="day.StartText" /></td>
-            <td><input type="time" @bind="day.EndText" /></td>
-            <td><button @onclick="() => SaveDayAsync(day)">Save</button></td>
-        </tr>
-    }
-    </tbody>
-</table>
+<MudPaper Class="pa-4 mb-4" Outlined="true">
+    <MudText Typo="Typo.h6" Class="mb-2">Weekly hours</MudText>
+    <MudTable Items="_week" Dense="true" Hover="true" Outlined="true">
+        <HeaderContent>
+            <MudTh>Day</MudTh>
+            <MudTh>Working</MudTh>
+            <MudTh>Start</MudTh>
+            <MudTh>End</MudTh>
+            <MudTh></MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Day">@DayName(context.DayOfWeek)</MudTd>
+            <MudTd DataLabel="Working"><MudCheckBox @bind-Value="context.IsWorkingDay" Color="Color.Primary" /></MudTd>
+            <MudTd DataLabel="Start"><MudTextField @bind-Value="context.StartText" Variant="Variant.Outlined" InputType="InputType.Time" Margin="Margin.Dense" /></MudTd>
+            <MudTd DataLabel="End"><MudTextField @bind-Value="context.EndText" Variant="Variant.Outlined" InputType="InputType.Time" Margin="Margin.Dense" /></MudTd>
+            <MudTd DataLabel="Save"><MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="() => SaveDayAsync(context)">Save</MudButton></MudTd>
+        </RowTemplate>
+    </MudTable>
+</MudPaper>
 
-<h4>Fixed breaks</h4>
-<div class="row">
-    <select @bind="_breakDay">@for (var i = 0; i < 7; i++) { <option value="@i">@DayName(i)</option> }</select>
-    <input type="time" @bind="_breakStart" />
-    <input type="time" @bind="_breakEnd" />
-    <input @bind="_breakLabel" placeholder="Label" />
-    <button @onclick="AddBreakAsync">Add break</button>
-</div>
-<ul>
-    @foreach (var b in _breaks)
-    {
-        <li>@DayName(b.DayOfWeek) @b.StartTime-@b.EndTime @b.Label <button @onclick="() => DeleteBreakAsync(b.Id)">Delete</button></li>
-    }
-</ul>
+<MudPaper Class="pa-4 mb-4" Outlined="true">
+    <MudText Typo="Typo.h6" Class="mb-2">Fixed breaks</MudText>
+    <MudGrid>
+        <MudItem xs="12" sm="3">
+            <MudSelect T="int" Label="Day" @bind-Value="_breakDay" Variant="Variant.Outlined" Margin="Margin.Dense">
+                @for (var i = 0; i < 7; i++)
+                {
+                    <MudSelectItem T="int" Value="@i">@DayName(i)</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="12" sm="3"><MudTextField @bind-Value="_breakStart" Label="Start" InputType="InputType.Time" Variant="Variant.Outlined" Margin="Margin.Dense" /></MudItem>
+        <MudItem xs="12" sm="3"><MudTextField @bind-Value="_breakEnd" Label="End" InputType="InputType.Time" Variant="Variant.Outlined" Margin="Margin.Dense" /></MudItem>
+        <MudItem xs="12" sm="3"><MudTextField @bind-Value="_breakLabel" Label="Label" Variant="Variant.Outlined" Margin="Margin.Dense" /></MudItem>
+    </MudGrid>
+    <MudButton Class="mt-2" Variant="Variant.Filled" Color="Color.Primary" OnClick="AddBreakAsync">Add break</MudButton>
 
-<h4>Blocked dates</h4>
-<div class="row">
-    <input type="date" @bind="_blockedDate" />
-    <input type="time" @bind="_blockedStart" />
-    <input type="time" @bind="_blockedEnd" />
-    <input @bind="_blockedReason" placeholder="Reason" />
-    <button @onclick="AddBlockedDateAsync">Add blocked date</button>
-</div>
-<ul>
-    @foreach (var b in _blocked)
-    {
-        <li>@b.Date @b.StartTime-@b.EndTime @b.Reason <button @onclick="() => DeleteBlockedAsync(b.Id)">Delete</button></li>
-    }
-</ul>
+    <MudList Dense="true" Class="mt-2">
+        @foreach (var b in _breaks)
+        {
+            <MudListItem>
+                <MudText>@DayName(b.DayOfWeek) @b.StartTime-@b.EndTime @b.Label</MudText>
+                <MudSpacer />
+                <MudButton Variant="Variant.Text" Color="Color.Error" OnClick="() => DeleteBreakAsync(b.Id)">Delete</MudButton>
+            </MudListItem>
+        }
+    </MudList>
+</MudPaper>
+
+<MudPaper Class="pa-4" Outlined="true">
+    <MudText Typo="Typo.h6" Class="mb-2">Blocked dates</MudText>
+    <MudGrid>
+        <MudItem xs="12" sm="3"><MudTextField @bind-Value="_blockedDate" Label="Date" InputType="InputType.Date" Variant="Variant.Outlined" Margin="Margin.Dense" /></MudItem>
+        <MudItem xs="12" sm="3"><MudTextField @bind-Value="_blockedStart" Label="Start" InputType="InputType.Time" Variant="Variant.Outlined" Margin="Margin.Dense" /></MudItem>
+        <MudItem xs="12" sm="3"><MudTextField @bind-Value="_blockedEnd" Label="End" InputType="InputType.Time" Variant="Variant.Outlined" Margin="Margin.Dense" /></MudItem>
+        <MudItem xs="12" sm="3"><MudTextField @bind-Value="_blockedReason" Label="Reason" Variant="Variant.Outlined" Margin="Margin.Dense" /></MudItem>
+    </MudGrid>
+    <MudButton Class="mt-2" Variant="Variant.Filled" Color="Color.Primary" OnClick="AddBlockedDateAsync">Add blocked date</MudButton>
+
+    <MudList Dense="true" Class="mt-2">
+        @foreach (var b in _blocked)
+        {
+            <MudListItem>
+                <MudText>@b.Date @b.StartTime-@b.EndTime @b.Reason</MudText>
+                <MudSpacer />
+                <MudButton Variant="Variant.Text" Color="Color.Error" OnClick="() => DeleteBlockedAsync(b.Id)">Delete</MudButton>
+            </MudListItem>
+        }
+    </MudList>
+</MudPaper>
 
 @code {
     private readonly List<WorkingDayVm> _week = Enumerable.Range(0, 7).Select(i => new WorkingDayVm(i)).ToList();

@@ -3,6 +3,7 @@ using Citapp.Admin.Domain.Ports;
 using Citapp.Admin.Infrastructure.Repositories;
 using Supabase;
 using System.Text;
+using MudBlazor.Services;
 
 var builder = WebAssemblyHostBuilder.CreateDefault(args);
 builder.RootComponents.Add<App>("#app");
@@ -31,6 +32,8 @@ builder.Services.AddScoped(_ => new Client(supabaseUrl, supabaseAnonKey, new Sup
 }));
 
 builder.Services.AddHttpClient("BotApi", c => c.BaseAddress = new Uri(botApiBaseUrl));
+
+builder.Services.AddMudServices();
 
 builder.Services.AddScoped<AdminSession>();
 builder.Services.AddScoped<BotApiClient>();
