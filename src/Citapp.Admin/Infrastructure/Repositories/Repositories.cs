@@ -22,6 +22,24 @@ public class ServiceRepository : IServiceRepository
         return response.Models.Select(ToDto).ToList();
     }
 
+    public async Task<List<ServiceDto>> GetByIdsAsync(Guid tenantId, IEnumerable<Guid> serviceIds)
+    {
+        var ids = serviceIds.Distinct().ToList();
+        if (ids.Count == 0)
+        {
+            return new List<ServiceDto>();
+        }
+
+        var response = await _client.From<ServiceRow>()
+            .Filter("tenant_id", Operator.Equals, tenantId.ToString())
+            .Get();
+
+        return response.Models
+            .Where(x => ids.Contains(x.Id))
+            .Select(ToDto)
+            .ToList();
+    }
+
     public async Task<ServiceDto?> GetByIdAsync(Guid id, Guid tenantId)
     {
         var response = await _client.From<ServiceRow>()
@@ -121,6 +139,17 @@ public class BookingRepository : IBookingRepository
         return response.Models.Select(ToDto).ToList();
     }
 
+    public async Task<List<BookingDto>> GetByCustomerAsync(Guid tenantId, Guid customerId)
+    {
+        var response = await _client.From<BookingRow>()
+            .Filter("tenant_id", Operator.Equals, tenantId.ToString())
+            .Filter("customer_id", Operator.Equals, customerId.ToString())
+            .Order("start_at", Ordering.Descending)
+            .Get();
+
+        return response.Models.Select(ToDto).ToList();
+    }
+
     private static BookingDto ToDto(BookingRow r)
     {
         Enum.TryParse<BookingSource>(r.Source, true, out var source);
@@ -173,6 +202,24 @@ public class CustomerRepository : ICustomerRepository
             .ToList();
     }
 
+    public async Task<List<CustomerDto>> GetByIdsAsync(Guid tenantId, IEnumerable<Guid> customerIds)
+    {
+        var ids = customerIds.Distinct().ToList();
+        if (ids.Count == 0)
+        {
+            return new List<CustomerDto>();
+        }
+
+        var response = await _client.From<CustomerRow>()
+            .Filter("tenant_id", Operator.Equals, tenantId.ToString())
+            .Get();
+
+        return response.Models
+            .Where(x => ids.Contains(x.Id))
+            .Select(ToDto)
+            .ToList();
+    }
+
     public async Task<CustomerDto?> GetByIdAsync(Guid tenantId, Guid customerId)
     {
         var response = await _client.From<CustomerRow>()
@@ -182,6 +229,20 @@ public class CustomerRepository : ICustomerRepository
             .Get();
 
         return response.Models.Select(ToDto).FirstOrDefault();
+    }
+
+    public async Task<CustomerDto> CreateManualAsync(Guid tenantId, string displayName, string? phone)
+    {
+        var syntheticWaUserId = $"manual:{Guid.NewGuid()}";
+        var response = await _client.From<CustomerRow>().Insert(new CustomerRow
+        {
+            TenantId = tenantId,
+            WaUserId = syntheticWaUserId,
+            DisplayName = displayName,
+            Phone = string.IsNullOrWhiteSpace(phone) ? null : phone.Trim()
+        });
+
+        return ToDto(response.Models.First());
     }
 
     public async Task UpdateNoteAsync(Guid id, Guid tenantId, string note)

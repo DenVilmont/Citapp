@@ -1,8 +1,135 @@
 @page "/customercard"
+@page "/customercard/{CustomerId:guid}"
+@inject AdminSession Session
+@inject ICustomerRepository CustomerRepository
+@inject IBookingRepository BookingRepository
+@inject IServiceRepository ServiceRepository
 @inject NavigationManager Nav
 
-<p>Use Customers page.</p>
+<h3>Customer card</h3>
+
+@if (!string.IsNullOrWhiteSpace(_error))
+{
+    <p style="color:red">@_error</p>
+}
+
+@if (CustomerId == Guid.Empty)
+{
+    <p>Select a customer from the <a href="/customerlist">Customers</a> page.</p>
+}
+else if (_customer is null)
+{
+    <p>Loading...</p>
+}
+else
+{
+    <div>
+        <p><strong>Name:</strong> @_customer.DisplayName</p>
+        <p><strong>Phone:</strong> @(_customer.Phone ?? "-")</p>
+        <p><strong>WA user id:</strong> @_customer.WaUserId</p>
+    </div>
+
+    <div>
+        <label><strong>Master note</strong></label><br />
+        <textarea rows="4" cols="80" @bind="_masterNote"></textarea><br />
+        <button @onclick="SaveNoteAsync">Save note</button>
+    </div>
+
+    <h4>Booking history</h4>
+    <table>
+        <thead>
+        <tr>
+            <th>Date</th>
+            <th>Time</th>
+            <th>Status</th>
+            <th>Source</th>
+            <th>Service</th>
+            <th>Price</th>
+        </tr>
+        </thead>
+        <tbody>
+        @foreach (var booking in _history)
+        {
+            <tr>
+                <td>@booking.Date</td>
+                <td>@booking.StartAt.LocalDateTime:HH\:mm - @booking.EndAt.LocalDateTime:HH\:mm</td>
+                <td>@booking.Status</td>
+                <td>@booking.Source</td>
+                <td>@ResolveServiceLabel(booking.ServiceId)</td>
+                <td>@booking.PriceSnapshotAmount @booking.CurrencySnapshot</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+
+    <p><a href="/customerlist">Back to customers</a></p>
+}
 
 @code {
-    protected override void OnInitialized() => Nav.NavigateTo("/customerlist", true);
+    [Parameter] public Guid CustomerId { get; set; }
+
+    private CustomerDto? _customer;
+    private List<BookingDto> _history = new();
+    private readonly Dictionary<Guid, string> _serviceLabels = new();
+    private string _masterNote = string.Empty;
+    private string _error = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Session.InitializeAsync();
+        if (!Session.IsAuthenticated || Session.TenantId is null)
+        {
+            Nav.NavigateTo("/login", true);
+            return;
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!Session.IsAuthenticated || Session.TenantId is null)
+        {
+            return;
+        }
+
+        if (CustomerId != Guid.Empty)
+        {
+            await LoadAsync();
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        _error = string.Empty;
+
+        _customer = await CustomerRepository.GetByIdAsync(Session.TenantId!.Value, CustomerId);
+        if (_customer is null)
+        {
+            _error = "Customer not found.";
+            return;
+        }
+
+        _masterNote = _customer.MasterNote ?? string.Empty;
+        _history = await BookingRepository.GetByCustomerAsync(Session.TenantId.Value, CustomerId);
+
+        var services = await ServiceRepository.GetByIdsAsync(Session.TenantId.Value, _history.Select(x => x.ServiceId));
+        _serviceLabels.Clear();
+        foreach (var service in services)
+        {
+            _serviceLabels[service.Id] = service.Name;
+        }
+    }
+
+    private async Task SaveNoteAsync()
+    {
+        if (_customer is null)
+        {
+            return;
+        }
+
+        await CustomerRepository.UpdateNoteAsync(_customer.Id, Session.TenantId!.Value, _masterNote);
+        _customer = _customer with { MasterNote = _masterNote };
+    }
+
+    private string ResolveServiceLabel(Guid serviceId)
+        => _serviceLabels.TryGetValue(serviceId, out var label) ? label : serviceId.ToString();
 }

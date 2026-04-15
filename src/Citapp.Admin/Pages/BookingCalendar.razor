@@ -33,16 +33,37 @@
 </div>
 
 <table>
-    <thead><tr><th>Date</th><th>Start</th><th>Status</th><th>CustomerId</th><th>ServiceId</th></tr></thead>
+    <thead>
+    <tr>
+        <th>Date</th>
+        <th>Time</th>
+        <th>Status</th>
+        <th>Source</th>
+        <th>Customer</th>
+        <th>Service</th>
+        <th>Price</th>
+        <th>Actions</th>
+    </tr>
+    </thead>
     <tbody>
     @foreach (var booking in _bookings)
     {
         <tr>
             <td>@booking.Date</td>
-            <td>@booking.StartAt.LocalDateTime</td>
+            <td>@booking.StartAt.LocalDateTime:HH\:mm - @booking.EndAt.LocalDateTime:HH\:mm</td>
             <td>@booking.Status</td>
-            <td>@booking.CustomerId</td>
-            <td>@booking.ServiceId</td>
+            <td>@booking.Source</td>
+            <td>
+                @ResolveCustomerLabel(booking.CustomerId)
+                <button @onclick="() => OpenCustomerCard(booking.CustomerId)">Open card</button>
+            </td>
+            <td>@ResolveServiceLabel(booking.ServiceId)</td>
+            <td>@booking.PriceSnapshotAmount @booking.CurrencySnapshot</td>
+            <td>
+                <button @onclick="() => UpdateStatusAsync(booking.Id, BookingStatus.Completed)">complete</button>
+                <button @onclick="() => UpdateStatusAsync(booking.Id, BookingStatus.NoShow)">no_show</button>
+                <button @onclick="() => UpdateStatusAsync(booking.Id, BookingStatus.Cancelled)">cancel</button>
+            </td>
         </tr>
     }
     </tbody>
@@ -61,9 +82,17 @@
     </select>
 </div>
 <div class="row">
+    <h5>Create customer inline</h5>
+</div>
+<div class="row">
+    <input @bind="_newCustomerDisplayName" placeholder="Display name" />
+    <input @bind="_newCustomerPhone" placeholder="Phone (optional)" />
+    <button @onclick="CreateManualCustomerAsync">Create and select</button>
+</div>
+<div class="row">
     <select @bind="_selectedServiceId">
         <option value="">Select service</option>
-        @foreach (var s in _serviceOptions)
+        @foreach (var s in _activeServiceOptions)
         {
             <option value="@s.Id">@s.Name (@s.DurationMinutes min)</option>
         }
@@ -90,12 +119,17 @@
 
     private string _customerSearch = string.Empty;
     private List<CustomerDto> _customerOptions = new();
-    private List<ServiceDto> _serviceOptions = new();
+    private List<ServiceDto> _activeServiceOptions = new();
+    private readonly Dictionary<Guid, string> _customerLabels = new();
+    private readonly Dictionary<Guid, string> _serviceLabels = new();
     private string _selectedCustomerId = string.Empty;
     private string _selectedServiceId = string.Empty;
     private string _slotDateText = DateTime.UtcNow.Date.ToString("yyyy-MM-dd");
     private List<TimeSlotVm> _slots = new();
     private string _selectedSlotStart = string.Empty;
+
+    private string _newCustomerDisplayName = string.Empty;
+    private string _newCustomerPhone = string.Empty;
 
     private string _error = string.Empty;
     private string _message = string.Empty;
@@ -109,7 +143,8 @@
             return;
         }
 
-        _serviceOptions = await ServiceRepository.GetAllAsync(Session.TenantId.Value);
+        var allServices = await ServiceRepository.GetAllAsync(Session.TenantId.Value);
+        _activeServiceOptions = allServices.Where(x => x.IsActive).OrderBy(x => x.SortOrder).ToList();
         await LoadBookingsAsync();
     }
 
@@ -127,11 +162,60 @@
             DateOnly.Parse(_fromText),
             DateOnly.Parse(_toText),
             status);
+
+        await LoadLookupLabelsAsync();
+    }
+
+    private async Task LoadLookupLabelsAsync()
+    {
+        _customerLabels.Clear();
+        _serviceLabels.Clear();
+
+        var customerIds = _bookings.Select(x => x.CustomerId).Distinct().ToList();
+        var serviceIds = _bookings.Select(x => x.ServiceId).Distinct().ToList();
+
+        var customers = await CustomerRepository.GetByIdsAsync(Session.TenantId!.Value, customerIds);
+        var services = await ServiceRepository.GetByIdsAsync(Session.TenantId!.Value, serviceIds);
+
+        foreach (var c in customers)
+        {
+            _customerLabels[c.Id] = string.IsNullOrWhiteSpace(c.Phone)
+                ? $"{c.DisplayName} ({c.WaUserId})"
+                : $"{c.DisplayName} ({c.Phone})";
+        }
+
+        foreach (var s in services)
+        {
+            _serviceLabels[s.Id] = s.Name;
+        }
     }
 
     private async Task SearchCustomersAsync()
     {
         _customerOptions = await CustomerRepository.SearchAsync(Session.TenantId!.Value, _customerSearch);
+    }
+
+    private async Task CreateManualCustomerAsync()
+    {
+        _error = string.Empty;
+        _message = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(_newCustomerDisplayName))
+        {
+            _error = "Display name is required for a new customer.";
+            return;
+        }
+
+        var created = await CustomerRepository.CreateManualAsync(
+            Session.TenantId!.Value,
+            _newCustomerDisplayName.Trim(),
+            _newCustomerPhone);
+
+        _customerOptions.Insert(0, created);
+        _selectedCustomerId = created.Id.ToString();
+        _newCustomerDisplayName = string.Empty;
+        _newCustomerPhone = string.Empty;
+        _message = $"Customer created ({created.DisplayName}).";
     }
 
     private async Task LoadSlotsAsync()
@@ -162,7 +246,7 @@
             return;
         }
 
-        var service = _serviceOptions.FirstOrDefault(x => x.Id == serviceId);
+        var service = _activeServiceOptions.FirstOrDefault(x => x.Id == serviceId);
         var slot = _slots.FirstOrDefault(x => x.StartAt == startAt);
         if (service is null || slot is null)
         {
@@ -185,6 +269,32 @@
         {
             await BotApiClient.CreateBookingAsync(dto);
             _message = "Booking created.";
+            await LoadBookingsAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private string ResolveCustomerLabel(Guid customerId)
+        => _customerLabels.TryGetValue(customerId, out var label) ? label : customerId.ToString();
+
+    private string ResolveServiceLabel(Guid serviceId)
+        => _serviceLabels.TryGetValue(serviceId, out var label) ? label : serviceId.ToString();
+
+    private void OpenCustomerCard(Guid customerId)
+        => Nav.NavigateTo($"/customercard/{customerId}");
+
+    private async Task UpdateStatusAsync(Guid bookingId, BookingStatus status)
+    {
+        _error = string.Empty;
+        _message = string.Empty;
+
+        try
+        {
+            await BotApiClient.UpdateBookingStatusAsync(bookingId, status);
+            _message = $"Booking updated to {status}.";
             await LoadBookingsAsync();
         }
         catch (Exception ex)
