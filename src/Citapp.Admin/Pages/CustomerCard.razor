@@ -1,10 +1,7 @@
 @page "/customercard"
 @page "/customercard/{CustomerId:guid}"
 @inject AdminSession Session
-@inject ICustomerRepository CustomerRepository
-@inject IBookingRepository BookingRepository
-@inject IServiceRepository ServiceRepository
-@inject ITenantRepository TenantRepository
+@inject CustomerPageService CustomerPageService
 @inject NavigationManager Nav
 
 <h3>Customer card</h3>
@@ -88,8 +85,7 @@ else
             return;
         }
 
-        var tenant = await TenantRepository.GetAsync(Session.TenantId.Value);
-        _tenantTimeZone = ResolveTimeZone(tenant?.Timezone);
+        _tenantTimeZone = await CustomerPageService.LoadTenantTimeZoneAsync(Session.TenantId.Value);
     }
 
     protected override async Task OnParametersSetAsync()
@@ -109,21 +105,21 @@ else
     {
         _error = string.Empty;
 
-        _customer = await CustomerRepository.GetByIdAsync(Session.TenantId!.Value, CustomerId);
-        if (_customer is null)
+        var cardData = await CustomerPageService.LoadCustomerCardAsync(Session.TenantId!.Value, CustomerId);
+        if (cardData is null)
         {
             _error = "Customer not found.";
             return;
         }
 
-        _masterNote = _customer.MasterNote ?? string.Empty;
-        _history = await BookingRepository.GetByCustomerAsync(Session.TenantId.Value, CustomerId);
+        _customer = cardData.Customer;
+        _masterNote = cardData.Customer.MasterNote ?? string.Empty;
+        _history = cardData.History;
 
-        var services = await ServiceRepository.GetByIdsAsync(Session.TenantId.Value, _history.Select(x => x.ServiceId));
         _serviceLabels.Clear();
-        foreach (var service in services)
+        foreach (var (serviceId, label) in cardData.ServiceLabels)
         {
-            _serviceLabels[service.Id] = service.Name;
+            _serviceLabels[serviceId] = label;
         }
     }
 
@@ -134,7 +130,7 @@ else
             return;
         }
 
-        await CustomerRepository.UpdateNoteAsync(_customer.Id, Session.TenantId!.Value, _masterNote);
+        await CustomerPageService.SaveNoteAsync(Session.TenantId!.Value, _customer.Id, _masterNote);
         _customer = _customer with { MasterNote = _masterNote };
     }
 
@@ -146,25 +142,4 @@ else
 
     private string FormatTimeRange(DateTimeOffset start, DateTimeOffset end)
         => $"{FormatDateTime(start):HH:mm} - {FormatDateTime(end):HH:mm}";
-
-    private static TimeZoneInfo ResolveTimeZone(string? timezone)
-    {
-        if (string.IsNullOrWhiteSpace(timezone))
-        {
-            return TimeZoneInfo.Utc;
-        }
-
-        try
-        {
-            return TimeZoneInfo.FindSystemTimeZoneById(timezone);
-        }
-        catch (TimeZoneNotFoundException)
-        {
-            return TimeZoneInfo.Utc;
-        }
-        catch (InvalidTimeZoneException)
-        {
-            return TimeZoneInfo.Utc;
-        }
-    }
 }

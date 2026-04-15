@@ -1,7 +1,7 @@
 @page "/customerlist"
 @page "/customers"
 @inject AdminSession Session
-@inject ICustomerRepository CustomerRepository
+@inject CustomerPageService CustomerPageService
 @inject NavigationManager Nav
 
 <h3>Customers</h3>
@@ -59,7 +59,7 @@
 
     private async Task LoadAsync()
     {
-        _customers = await CustomerRepository.SearchAsync(Session.TenantId!.Value, _query);
+        _customers = await CustomerPageService.SearchAsync(Session.TenantId!.Value, _query);
         _notes.Clear();
         foreach (var c in _customers)
         {
@@ -69,7 +69,7 @@
 
     private async Task SaveNoteAsync(Guid customerId)
     {
-        await CustomerRepository.UpdateNoteAsync(customerId, Session.TenantId!.Value, _notes[customerId]);
+        await CustomerPageService.SaveNoteAsync(Session.TenantId!.Value, customerId, _notes[customerId]);
         _message = "Note updated.";
     }
 }
