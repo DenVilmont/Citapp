@@ -364,10 +364,6 @@ public class BotFsmHandler
         try
         {
             var booking = await _bookingTransactions.CreateAsync(tenantId, create, null, payload.ExistingBookingId);
-            if (payload.ExistingBookingId is not null)
-            {
-                await _bookings.CancelAsync(payload.ExistingBookingId.Value, tenantId, CancelledBy.Customer.ToString());
-            }
 
             var service = await _services.GetSnapshotAsync(tenantId, booking.ServiceId);
             var bookingTimezone = ResolveTimeZone(tenant.Timezone);

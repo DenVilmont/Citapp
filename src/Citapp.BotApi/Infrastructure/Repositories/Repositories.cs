@@ -364,6 +364,21 @@ public class BookingRepository
         await cmd.ExecuteNonQueryAsync();
     }
 
+    public async Task<int> CancelInTransactionAsync(Guid id, Guid tenantId, string cancelledBy, NpgsqlConnection conn, NpgsqlTransaction tx)
+    {
+        const string sql = """
+            update bookings
+            set status = 'cancelled', cancelled_by = @cancelled_by, cancelled_at = now()
+            where id = @id and tenant_id = @tenant_id and status = 'booked'
+            """;
+
+        await using var cmd = new NpgsqlCommand(sql, conn, tx);
+        cmd.Parameters.AddWithValue("id", id);
+        cmd.Parameters.AddWithValue("tenant_id", tenantId);
+        cmd.Parameters.AddWithValue("cancelled_by", cancelledBy.ToLowerInvariant());
+        return await cmd.ExecuteNonQueryAsync();
+    }
+
     public async Task<BookingDto?> GetFutureBookedByIdAndCustomerAsync(Guid tenantId, Guid customerId, Guid bookingId)
     {
         const string sql = """

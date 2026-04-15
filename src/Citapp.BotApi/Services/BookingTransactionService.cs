@@ -67,6 +67,7 @@ public class BookingTransactionService
             };
 
             var booking = await CreateInTransaction(tenantId, create, createdByUserId, conn, tx);
+            await CancelReplacedBookingInTransaction(tenantId, replacingBookingId, conn, tx);
             await tx.CommitAsync();
             return booking;
         }
@@ -190,6 +191,30 @@ public class BookingTransactionService
         cmd.Parameters.AddWithValue("service_id", serviceId);
         var value = await cmd.ExecuteScalarAsync();
         if (value is null)
+        {
+            throw new BookingConflictException("Original booking for rebooking is no longer available.");
+        }
+    }
+
+    private async Task CancelReplacedBookingInTransaction(
+        Guid tenantId,
+        Guid? replacingBookingId,
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx)
+    {
+        if (replacingBookingId is null)
+        {
+            return;
+        }
+
+        var affectedRows = await _bookings.CancelInTransactionAsync(
+            replacingBookingId.Value,
+            tenantId,
+            CancelledBy.Customer.ToString(),
+            conn,
+            tx);
+
+        if (affectedRows == 0)
         {
             throw new BookingConflictException("Original booking for rebooking is no longer available.");
         }
