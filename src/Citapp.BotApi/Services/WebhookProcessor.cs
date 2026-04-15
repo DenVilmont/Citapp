@@ -31,11 +31,11 @@ public class WebhookProcessor
             var payload = JsonSerializer.Deserialize<WhatsAppWebhookPayload>(raw);
             var msg = payload?.Entry?.FirstOrDefault()?.Changes?.FirstOrDefault()?.Value?.Messages?.FirstOrDefault();
             if (msg is null) return Results.Ok();
-            if (await _events.ExistsAsync(msg.Id)) return Results.Ok();
 
             var phoneNumberId = payload!.Entry[0].Changes[0].Value.Metadata.PhoneNumberId;
             var tenantId = await _tenants.GetByPhoneNumberIdAsync(phoneNumberId);
-            await _events.SaveAsync(msg.Id, tenantId, raw);
+            var accepted = await _events.TrySaveAsync(msg.Id, tenantId, raw);
+            if (!accepted) return Results.Ok();
             if (tenantId is null) { _logger.LogInformation("Unknown phone_number_id {phoneNumberId}", phoneNumberId); return Results.Ok(); }
 
             var contact = payload.Entry[0].Changes[0].Value.Contacts?.FirstOrDefault();

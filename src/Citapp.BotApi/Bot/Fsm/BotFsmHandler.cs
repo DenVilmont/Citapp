@@ -325,7 +325,12 @@ public class BotFsmHandler
 
         try
         {
-            var booking = await _bookingTransactions.CreateAsync(tenantId, create, null);
+            var booking = await _bookingTransactions.CreateAsync(tenantId, create, null, payload.ExistingBookingId);
+            if (payload.ExistingBookingId is not null)
+            {
+                await _bookings.CancelAsync(payload.ExistingBookingId.Value, tenantId, CancelledBy.Customer.ToString());
+            }
+
             await _sender.SendTextAsync(waUserId, phoneNumberId, $"Готово ✅ {booking.Date:dd.MM} в {booking.StartAt:HH:mm}");
             await ShowMainMenuAsync(tenant, tenantId, customerId, waUserId, phoneNumberId);
         }
@@ -394,7 +399,15 @@ public class BotFsmHandler
             return;
         }
 
-        await _bookings.CancelAsync(payload.BookingId.Value, tenantId, CancelledBy.Customer.ToString());
+        var existing = await _bookings.GetFutureBookedByIdAndCustomerAsync(tenantId, customerId, payload.BookingId.Value);
+        if (existing is null)
+        {
+            await _sender.SendTextAsync(waUserId, phoneNumberId, "Эту запись уже нельзя отменить.");
+            await SendCancelableBookingsMenuAsync(tenantId, customerId, waUserId, phoneNumberId);
+            return;
+        }
+
+        await _bookings.CancelAsync(existing.Id, tenantId, CancelledBy.Customer.ToString());
         await _sender.SendTextAsync(waUserId, phoneNumberId, "Запись отменена.");
 
         var tenant = await _tenants.GetBotSettingsAsync(tenantId);
@@ -426,13 +439,17 @@ public class BotFsmHandler
 
         if (input.PayloadId == "dup_rebook")
         {
-            if (payload.ExistingBookingId is not null)
-            {
-                await _bookings.CancelAsync(payload.ExistingBookingId.Value, tenantId, CancelledBy.Customer.ToString());
-            }
-
-            await _sender.SendTextAsync(waUserId, phoneNumberId, "Текущая запись отменена. Выберите новую дату.");
+            await _sender.SendTextAsync(waUserId, phoneNumberId, "Выберите новую дату. Текущая запись будет отменена только после подтверждения новой.");
             await SendDateMenuAsync(tenantId, customerId, payload.ServiceId.Value, waUserId, phoneNumberId);
+            await SaveStateAsync(
+                tenantId,
+                customerId,
+                BotState.BookingSelectDate,
+                new FsmPayload
+                {
+                    ServiceId = payload.ServiceId,
+                    ExistingBookingId = payload.ExistingBookingId
+                });
             return;
         }
 
@@ -537,7 +554,18 @@ public class BotFsmHandler
             .ToList();
 
         await _sender.SendListAsync(waUserId, phoneNumberId, "Выберите время", "Время", rows);
-        await SaveStateAsync(tenantId, customerId, BotState.BookingSelectTime, new FsmPayload { ServiceId = serviceId, Date = date });
+        var previous = await LoadStateAsync(tenantId, customerId);
+        var previousPayload = Deserialize(previous.Payload);
+        await SaveStateAsync(
+            tenantId,
+            customerId,
+            BotState.BookingSelectTime,
+            new FsmPayload
+            {
+                ServiceId = serviceId,
+                Date = date,
+                ExistingBookingId = previousPayload.ExistingBookingId
+            });
     }
 
     private async Task SendCancelableBookingsMenuAsync(Guid tenantId, Guid customerId, string waUserId, string phoneNumberId)

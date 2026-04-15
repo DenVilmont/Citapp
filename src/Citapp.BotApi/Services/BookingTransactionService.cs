@@ -24,7 +24,7 @@ public class BookingTransactionService
         _connectionString = TenantRepository.ResolveConnectionString(configuration);
     }
 
-    public async Task<BookingDto> CreateAsync(Guid tenantId, CreateBookingDto dto, Guid? createdByUserId)
+    public async Task<BookingDto> CreateAsync(Guid tenantId, CreateBookingDto dto, Guid? createdByUserId, Guid? replacingBookingId = null)
     {
         var tenant = await _tenants.GetSettingsAsync(tenantId) ?? throw new BookingConflictException("Tenant not found.");
         var service = await _services.GetSnapshotAsync(tenantId, dto.ServiceId);
@@ -37,6 +37,10 @@ public class BookingTransactionService
         var localStart = TimeZoneInfo.ConvertTime(dto.StartAt, timezone);
         var localDate = DateOnly.FromDateTime(localStart.Date);
         var computedEndUtc = dto.StartAt.ToUniversalTime().AddMinutes(service.DurationMinutes + tenant.DefaultBufferMinutes);
+        if (dto.StartAt.ToUniversalTime() <= DateTimeOffset.UtcNow)
+        {
+            throw new BookingConflictException("Cannot create a booking in the past.");
+        }
 
         if (dto.Date != localDate)
         {
@@ -49,7 +53,8 @@ public class BookingTransactionService
         try
         {
             await EnsureSlotIsAvailableInTransaction(tenantId, dto.ServiceId, dto.StartAt.ToUniversalTime(), localDate, conn, tx);
-            await EnsureNoDuplicateActiveBookingInTransaction(tenantId, dto.CustomerId, dto.ServiceId, conn, tx);
+            await EnsureReplacementBookingIsValidInTransaction(tenantId, dto.CustomerId, dto.ServiceId, replacingBookingId, conn, tx);
+            await EnsureNoDuplicateActiveBookingInTransaction(tenantId, dto.CustomerId, dto.ServiceId, replacingBookingId, conn, tx);
 
             var create = dto with
             {
@@ -115,10 +120,11 @@ public class BookingTransactionService
         Guid tenantId,
         Guid customerId,
         Guid serviceId,
+        Guid? replacingBookingId,
         NpgsqlConnection conn,
         NpgsqlTransaction tx)
     {
-        const string sql = """
+        var sql = """
             select 1
             from bookings
             where tenant_id = @tenant_id
@@ -126,17 +132,64 @@ public class BookingTransactionService
               and service_id = @service_id
               and status = 'booked'
               and start_at > now()
-            limit 1
             """;
+        if (replacingBookingId is not null)
+        {
+            sql += "\n  and id <> @exclude_booking_id";
+        }
+
+        sql += "\nlimit 1";
 
         await using var cmd = new NpgsqlCommand(sql, conn, tx);
         cmd.Parameters.AddWithValue("tenant_id", tenantId);
         cmd.Parameters.AddWithValue("customer_id", customerId);
         cmd.Parameters.AddWithValue("service_id", serviceId);
+        if (replacingBookingId is not null)
+        {
+            cmd.Parameters.AddWithValue("exclude_booking_id", replacingBookingId.Value);
+        }
+
         var value = await cmd.ExecuteScalarAsync();
         if (value is not null)
         {
             throw new BookingConflictException("Customer already has an active future booking for this service.");
+        }
+    }
+
+    private static async Task EnsureReplacementBookingIsValidInTransaction(
+        Guid tenantId,
+        Guid customerId,
+        Guid serviceId,
+        Guid? replacingBookingId,
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx)
+    {
+        if (replacingBookingId is null)
+        {
+            return;
+        }
+
+        const string sql = """
+            select 1
+            from bookings
+            where id = @id
+              and tenant_id = @tenant_id
+              and customer_id = @customer_id
+              and service_id = @service_id
+              and status = 'booked'
+              and start_at > now()
+            for update
+            """;
+
+        await using var cmd = new NpgsqlCommand(sql, conn, tx);
+        cmd.Parameters.AddWithValue("id", replacingBookingId.Value);
+        cmd.Parameters.AddWithValue("tenant_id", tenantId);
+        cmd.Parameters.AddWithValue("customer_id", customerId);
+        cmd.Parameters.AddWithValue("service_id", serviceId);
+        var value = await cmd.ExecuteScalarAsync();
+        if (value is null)
+        {
+            throw new BookingConflictException("Original booking for rebooking is no longer available.");
         }
     }
 
@@ -199,6 +252,11 @@ public class BookingTransactionService
         var occupied = TimeSpan.FromMinutes(occupiedMinutes);
         for (var cursor = workStartUtc; cursor + occupied <= workEndUtc; cursor = cursor.Add(step))
         {
+            if (cursor <= DateTimeOffset.UtcNow)
+            {
+                continue;
+            }
+
             var candidateEnd = cursor.Add(occupied);
             if (intervals.Any(x => cursor < x.EndUtc && x.StartUtc < candidateEnd))
             {

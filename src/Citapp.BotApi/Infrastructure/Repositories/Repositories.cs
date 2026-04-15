@@ -325,7 +325,7 @@ public class BookingRepository
         const string sql = """
             update bookings
             set status = 'cancelled', cancelled_by = @cancelled_by, cancelled_at = now()
-            where id = @id and tenant_id = @tenant_id
+            where id = @id and tenant_id = @tenant_id and status = 'booked'
             """;
 
         await using var conn = new NpgsqlConnection(_connectionString);
@@ -335,6 +335,31 @@ public class BookingRepository
         cmd.Parameters.AddWithValue("tenant_id", tenantId);
         cmd.Parameters.AddWithValue("cancelled_by", cancelledBy.ToLowerInvariant());
         await cmd.ExecuteNonQueryAsync();
+    }
+
+    public async Task<BookingDto?> GetFutureBookedByIdAndCustomerAsync(Guid tenantId, Guid customerId, Guid bookingId)
+    {
+        const string sql = """
+            select id, tenant_id, customer_id, service_id, source, status, date, start_at, end_at,
+                   duration_snapshot_minutes, price_snapshot_amount, currency_snapshot,
+                   created_by_user_id, cancelled_by, cancelled_at, created_at
+            from bookings
+            where tenant_id = @tenant_id
+              and customer_id = @customer_id
+              and id = @id
+              and status = 'booked'
+              and start_at > now()
+            limit 1
+            """;
+
+        await using var conn = new NpgsqlConnection(_connectionString);
+        await conn.OpenAsync();
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("tenant_id", tenantId);
+        cmd.Parameters.AddWithValue("customer_id", customerId);
+        cmd.Parameters.AddWithValue("id", bookingId);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        return await reader.ReadAsync() ? ReadBooking(reader) : null;
     }
 
     public async Task UpdateStatusAsync(Guid id, Guid tenantId, string status)
@@ -764,5 +789,24 @@ public class WebhookEventRepository
         cmd.Parameters.AddWithValue("tenant_id", (object?)tenantId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("payload_json", payloadJson);
         await cmd.ExecuteNonQueryAsync();
+    }
+
+    public async Task<bool> TrySaveAsync(string externalEventId, Guid? tenantId, string payloadJson)
+    {
+        const string sql = """
+            insert into inbound_webhook_events (external_event_id, tenant_id, direction, payload_json)
+            values (@external_event_id, @tenant_id, 'inbound', cast(@payload_json as jsonb))
+            on conflict (external_event_id)
+            do nothing
+            """;
+
+        await using var conn = new NpgsqlConnection(_connectionString);
+        await conn.OpenAsync();
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("external_event_id", externalEventId);
+        cmd.Parameters.AddWithValue("tenant_id", (object?)tenantId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("payload_json", payloadJson);
+        var affected = await cmd.ExecuteNonQueryAsync();
+        return affected > 0;
     }
 }
