@@ -62,10 +62,13 @@
         <MudTd DataLabel="Price">@context.PriceSnapshotAmount @context.CurrencySnapshot</MudTd>
         <MudTd DataLabel="Actions">
             <MudStack Row="true" Spacing="1">
-                <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="() => UpdateStatusAsync(context.Id, BookingStatus.Completed)">complete</MudButton>
-                <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="() => UpdateStatusAsync(context.Id, BookingStatus.NoShow)">no_show</MudButton>
-                <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="() => UpdateStatusAsync(context.Id, BookingStatus.BlockedByMaster)">block</MudButton>
-                <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error" OnClick="() => UpdateStatusAsync(context.Id, BookingStatus.Cancelled)">cancel</MudButton>
+                @foreach (var action in GetActionsForStatus(context.Status))
+                {
+                    <MudButton Size="Size.Small"
+                               Variant="Variant.Outlined"
+                               Color="@(action.Target == BookingStatus.Cancelled ? Color.Error : Color.Default)"
+                               OnClick="() => UpdateStatusAsync(context.Id, action.Target)">@action.Label</MudButton>
+                }
             </MudStack>
         </MudTd>
     </RowTemplate>
@@ -257,6 +260,24 @@
     private void OpenCustomerCard(Guid customerId)
         => Nav.NavigateTo($"/customercard/{customerId}");
 
+
+    private static IReadOnlyList<BookingStatusAction> GetActionsForStatus(BookingStatus status)
+        => status switch
+        {
+            BookingStatus.Booked =>
+            [
+                new BookingStatusAction(BookingStatus.Completed, "complete"),
+                new BookingStatusAction(BookingStatus.NoShow, "no_show"),
+                new BookingStatusAction(BookingStatus.BlockedByMaster, "block"),
+                new BookingStatusAction(BookingStatus.Cancelled, "cancel")
+            ],
+            BookingStatus.BlockedByMaster =>
+            [
+                new BookingStatusAction(BookingStatus.Booked, "unblock")
+            ],
+            _ => Array.Empty<BookingStatusAction>()
+        };
+
     private async Task UpdateStatusAsync(Guid bookingId, BookingStatus status)
     {
         _error = string.Empty;
@@ -273,4 +294,7 @@
             _error = ex.Message;
         }
     }
+
+    private sealed record BookingStatusAction(BookingStatus Target, string Label);
+
 }

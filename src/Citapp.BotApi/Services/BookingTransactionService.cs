@@ -96,33 +96,62 @@ public class BookingTransactionService
             throw new BookingConflictException("Booking not found.");
         }
 
-        var target = status.Trim().ToLowerInvariant();
-        if (target is not ("complete" or "completed" or "no_show" or "noshow" or "cancel" or "cancelled" or "blocked_by_master" or "blockedbymaster"))
+        var target = NormalizeStatus(status);
+
+        if (!IsAllowedTransition(booking.Status, target))
         {
-            throw new BookingConflictException("Unsupported status transition.");
+            throw new BookingConflictException($"Unsupported status transition: {booking.Status} -> {target}.");
         }
 
-        if (booking.Status != BookingStatus.Booked)
-        {
-            throw new BookingConflictException("Only booked bookings can be updated.");
-        }
-
-        if (target is "cancel" or "cancelled")
+        if (target == BookingStatus.Cancelled)
         {
             await _bookings.CancelAsync(bookingId, tenantId, "master");
             return;
         }
 
-        var normalized = target switch
+        await _bookings.UpdateStatusAsync(bookingId, tenantId, ToSnakeCase(target));
+    }
+
+    private static BookingStatus NormalizeStatus(string status)
+    {
+        var normalized = status.Trim().ToLowerInvariant() switch
         {
             "complete" => "completed",
             "noshow" => "no_show",
             "blockedbymaster" => "blocked_by_master",
-            _ => target
+            "cancel" => "cancelled",
+            _ => status.Trim().ToLowerInvariant()
         };
 
-        await _bookings.UpdateStatusAsync(bookingId, tenantId, normalized);
+        return normalized switch
+        {
+            "booked" => BookingStatus.Booked,
+            "completed" => BookingStatus.Completed,
+            "no_show" => BookingStatus.NoShow,
+            "cancelled" => BookingStatus.Cancelled,
+            "blocked_by_master" => BookingStatus.BlockedByMaster,
+            _ => throw new BookingConflictException("Unsupported status transition.")
+        };
     }
+
+    private static bool IsAllowedTransition(BookingStatus current, BookingStatus target)
+        => (current, target) switch
+        {
+            (BookingStatus.Booked, BookingStatus.Completed) => true,
+            (BookingStatus.Booked, BookingStatus.NoShow) => true,
+            (BookingStatus.Booked, BookingStatus.Cancelled) => true,
+            (BookingStatus.Booked, BookingStatus.BlockedByMaster) => true,
+            (BookingStatus.BlockedByMaster, BookingStatus.Booked) => true,
+            _ => false
+        };
+
+    private static string ToSnakeCase(BookingStatus status)
+        => status switch
+        {
+            BookingStatus.NoShow => "no_show",
+            BookingStatus.BlockedByMaster => "blocked_by_master",
+            _ => status.ToString().ToLowerInvariant()
+        };
 
     private static async Task EnsureNoDuplicateActiveBookingInTransaction(
         Guid tenantId,
