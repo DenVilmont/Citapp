@@ -1,5 +1,4 @@
 using System.Security.Claims;
-using System.Text;
 using Citapp.BotApi.Services;
 using Citapp.BotApi.Infrastructure.Repositories;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -40,6 +39,7 @@ builder.Services.AddScoped<BookingRepository>();
 builder.Services.AddScoped<ScheduleRepository>();
 builder.Services.AddScoped<ConversationStateRepository>();
 builder.Services.AddScoped<WebhookEventRepository>();
+builder.Services.AddScoped<AuthenticatedTenantResolver>();
 builder.Services.AddScoped<SlotCalculationService>();
 builder.Services.AddScoped<BookingTransactionService>();
 builder.Services.AddScoped<BotFsmHandler>();
@@ -62,21 +62,38 @@ app.MapGet("/webhook/whatsapp", (HttpRequest request) =>
 app.MapPost("/webhook/whatsapp", async (HttpRequest request, WebhookProcessor processor) =>
     await processor.ProcessAsync(request));
 
-app.MapGet("/api/slots", async (Guid serviceId, DateOnly date, Guid tenantId, SlotCalculationService svc)
-    => Results.Ok(await svc.GetAvailableSlotsAsync(tenantId, serviceId, date))).RequireAuthorization();
-
-app.MapGet("/api/slots/available-dates", async (Guid serviceId, Guid tenantId, SlotCalculationService svc)
-    => Results.Ok(await svc.GetAvailableDatesAsync(tenantId, serviceId, 30))).RequireAuthorization();
-
-app.MapPost("/api/bookings", async (Citapp.Shared.DTOs.CreateBookingDto dto, BookingTransactionService svc) =>
+app.MapGet("/api/slots", async (ClaimsPrincipal user, Guid serviceId, DateOnly date, AuthenticatedTenantResolver tenantResolver, SlotCalculationService svc) =>
 {
-    try { return Results.Created($"/api/bookings/{Guid.NewGuid()}", await svc.CreateAsync(dto)); }
+    var tenantId = await tenantResolver.ResolveTenantIdAsync(user);
+    if (tenantId is null) return Results.Forbid();
+    return Results.Ok(await svc.GetAvailableSlotsAsync(tenantId.Value, serviceId, date));
+}).RequireAuthorization();
+
+app.MapGet("/api/slots/available-dates", async (ClaimsPrincipal user, Guid serviceId, AuthenticatedTenantResolver tenantResolver, SlotCalculationService svc) =>
+{
+    var tenantId = await tenantResolver.ResolveTenantIdAsync(user);
+    if (tenantId is null) return Results.Forbid();
+    return Results.Ok(await svc.GetAvailableDatesAsync(tenantId.Value, serviceId, 30));
+}).RequireAuthorization();
+
+app.MapPost("/api/bookings", async (ClaimsPrincipal user, Citapp.Shared.DTOs.CreateBookingDto dto, AuthenticatedTenantResolver tenantResolver, BookingTransactionService svc) =>
+{
+    var tenantId = await tenantResolver.ResolveTenantIdAsync(user);
+    if (tenantId is null) return Results.Forbid();
+
+    var rawUserId = user.FindFirstValue(ClaimTypes.NameIdentifier) ?? user.FindFirstValue("sub");
+    Guid? createdByUserId = Guid.TryParse(rawUserId, out var userId) ? userId : null;
+
+    try { return Results.Created($"/api/bookings/{Guid.NewGuid()}", await svc.CreateAsync(tenantId.Value, dto, createdByUserId)); }
     catch (BookingConflictException ex) { return Results.Conflict(new { message = ex.Message }); }
 }).RequireAuthorization();
 
-app.MapPut("/api/bookings/{id:guid}/status", async (Guid id, string status, Guid tenantId, BookingRepository repo) =>
+app.MapPut("/api/bookings/{id:guid}/status", async (ClaimsPrincipal user, Guid id, string status, AuthenticatedTenantResolver tenantResolver, BookingRepository repo) =>
 {
-    await repo.UpdateStatusAsync(id, tenantId, status);
+    var tenantId = await tenantResolver.ResolveTenantIdAsync(user);
+    if (tenantId is null) return Results.Forbid();
+
+    await repo.UpdateStatusAsync(id, tenantId.Value, status);
     return Results.NoContent();
 }).RequireAuthorization();
 

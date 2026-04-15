@@ -1,4 +1,5 @@
 using Citapp.Shared.Enums;
+using System.Text.Json.Serialization;
 
 namespace Citapp.Shared.DTOs;
 
@@ -17,7 +18,6 @@ public record ConversationStateDto(Guid Id, Guid TenantId, Guid CustomerId, BotS
 public record InboundWebhookEventDto(Guid Id, string Provider, string ExternalEventId, Guid? TenantId, string Direction, string PayloadJson, bool Processed, DateTimeOffset CreatedAt);
 
 public record CreateBookingDto(
-    Guid TenantId,
     Guid CustomerId,
     Guid ServiceId,
     BookingSource Source,
@@ -26,4 +26,8 @@ public record CreateBookingDto(
     DateTimeOffset EndAt,
     int DurationSnapshotMinutes,
     decimal PriceSnapshotAmount,
-    string CurrencySnapshot);
+    string CurrencySnapshot)
+{
+    [JsonIgnore]
+    public Guid TenantId { get; init; }
+}
