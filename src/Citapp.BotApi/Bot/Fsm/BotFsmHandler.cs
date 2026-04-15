@@ -127,36 +127,49 @@ public class BotFsmHandler
             return;
         }
 
-        if (input.PayloadId is null || !input.PayloadId.StartsWith("svc:", StringComparison.Ordinal))
+        if (input.PayloadId is null)
         {
             await SendServicesMenuAsync(tenantId, customerId, waUserId, phoneNumberId);
             return;
         }
 
-        if (!Guid.TryParse(input.PayloadId[4..], out var serviceId))
+        if (input.PayloadId.StartsWith("svc:", StringComparison.Ordinal))
         {
-            await SendServicesMenuAsync(tenantId, customerId, waUserId, phoneNumberId);
+            if (!Guid.TryParse(input.PayloadId[4..], out var selectedId))
+            {
+                await SendServicesMenuAsync(tenantId, customerId, waUserId, phoneNumberId);
+                return;
+            }
+
+            await SendServiceChoiceMenuAsync(tenantId, customerId, selectedId, waUserId, phoneNumberId);
             return;
         }
 
-        var duplicate = await _bookings.GetActiveByCustomerAndServiceAsync(tenantId, customerId, serviceId);
-        if (duplicate is not null)
+        if (input.PayloadId.StartsWith("svc_book:", StringComparison.Ordinal))
         {
-            var svc = await _services.GetSnapshotAsync(tenantId, serviceId);
-            var title = svc is null ? "услуга" : "эта услуга";
-            await _sender.SendButtonsAsync(
-                waUserId,
-                phoneNumberId,
-                $"У вас уже есть запись на {title}. Что делаем?",
-                [
-                    ("dup_keep", "Оставить"),
-                    ("dup_rebook", "Перезаписаться")
-                ]);
-            await SaveStateAsync(tenantId, customerId, BotState.BookingConfirm, new FsmPayload { ServiceId = serviceId, ExistingBookingId = duplicate.Id, DuplicatePrompt = true });
+            if (!Guid.TryParse(input.PayloadId["svc_book:".Length..], out var serviceId))
+            {
+                await SendServicesMenuAsync(tenantId, customerId, waUserId, phoneNumberId);
+                return;
+            }
+
+            await StartBookingFlowAsync(tenantId, customerId, serviceId, waUserId, phoneNumberId);
             return;
         }
 
-        await MaybeShowPortfolioThenDatesAsync(tenantId, customerId, serviceId, waUserId, phoneNumberId);
+        if (input.PayloadId.StartsWith("svc_photo:", StringComparison.Ordinal))
+        {
+            if (!Guid.TryParse(input.PayloadId["svc_photo:".Length..], out var serviceId))
+            {
+                await SendServicesMenuAsync(tenantId, customerId, waUserId, phoneNumberId);
+                return;
+            }
+
+            await SendServicePhotoAndContinueAsync(tenantId, customerId, serviceId, waUserId, phoneNumberId);
+            return;
+        }
+
+        await SendServicesMenuAsync(tenantId, customerId, waUserId, phoneNumberId);
     }
 
     private async Task HandlePortfolioStateAsync(UserInput input, ConversationSnapshot currentState, TenantBotSettings tenant, Guid tenantId, Guid customerId, string waUserId, string phoneNumberId)
@@ -174,31 +187,19 @@ public class BotFsmHandler
             return;
         }
 
-        if (input.PayloadId == "pf_view")
-        {
-            var service = (await _services.GetActiveForBotAsync(tenantId)).FirstOrDefault(x => x.ServiceId == payload.ServiceId.Value);
-            if (service?.PrimaryImageUrl is not null)
-            {
-                await _sender.SendImageAsync(waUserId, phoneNumberId, service.PrimaryImageUrl, service.Name);
-            }
-
-            await SendDateMenuAsync(tenantId, customerId, payload.ServiceId.Value, waUserId, phoneNumberId);
-            return;
-        }
-
-        if (input.PayloadId == "pf_skip")
-        {
-            await SendDateMenuAsync(tenantId, customerId, payload.ServiceId.Value, waUserId, phoneNumberId);
-            return;
-        }
-
         if (input.PayloadId == "main_menu")
         {
             await ShowMainMenuAsync(tenant, tenantId, customerId, waUserId, phoneNumberId);
             return;
         }
 
-        await MaybeShowPortfolioThenDatesAsync(tenantId, customerId, payload.ServiceId.Value, waUserId, phoneNumberId);
+        if (input.PayloadId == $"svc_book:{payload.ServiceId.Value}")
+        {
+            await SendDateMenuAsync(tenantId, customerId, payload.ServiceId.Value, waUserId, phoneNumberId);
+            return;
+        }
+
+        await SendServicePhotoAndContinueAsync(tenantId, customerId, payload.ServiceId.Value, waUserId, phoneNumberId);
     }
 
     private async Task HandleSelectDateAsync(UserInput input, ConversationSnapshot currentState, Guid tenantId, Guid customerId, string waUserId, string phoneNumberId)
@@ -488,14 +489,18 @@ public class BotFsmHandler
 
         var rows = services
             .Take(10)
-            .Select(x => ($"svc:{x.ServiceId}", x.Name, x.HasPrimaryImage ? "Есть портфолио" : $"{x.DurationMinutes} мин"))
+            .Select(x =>
+            {
+                var marker = x.HasPrimaryImage ? "📷 Фото • " : string.Empty;
+                return ($"svc:{x.ServiceId}", x.Name, $"{marker}{x.DurationMinutes} мин");
+            })
             .ToList();
 
         await _sender.SendListAsync(waUserId, phoneNumberId, "Выберите услугу", "Услуги", rows);
         await SaveStateAsync(tenantId, customerId, BotState.BookingSelectService, new FsmPayload());
     }
 
-    private async Task MaybeShowPortfolioThenDatesAsync(Guid tenantId, Guid customerId, Guid serviceId, string waUserId, string phoneNumberId)
+    private async Task SendServiceChoiceMenuAsync(Guid tenantId, Guid customerId, Guid serviceId, string waUserId, string phoneNumberId)
     {
         var service = (await _services.GetActiveForBotAsync(tenantId)).FirstOrDefault(x => x.ServiceId == serviceId);
         if (service is null)
@@ -509,12 +514,61 @@ public class BotFsmHandler
             await _sender.SendButtonsAsync(
                 waUserId,
                 phoneNumberId,
-                "Показать портфолио перед выбором даты?",
+                $"Для \"{service.Name}\" доступно фото. Что показать?",
                 [
-                    ("pf_view", "Да"),
-                    ("pf_skip", "Пропустить")
+                    ($"svc_photo:{serviceId}", "📷 Смотреть фото"),
+                    ($"svc_book:{serviceId}", "Продолжить запись"),
+                    ("main_menu", "В меню")
                 ]);
-            await SaveStateAsync(tenantId, customerId, BotState.PortfolioView, new FsmPayload { ServiceId = serviceId });
+            await SaveStateAsync(tenantId, customerId, BotState.BookingSelectService, new FsmPayload { ServiceId = serviceId });
+            return;
+        }
+
+        await StartBookingFlowAsync(tenantId, customerId, serviceId, waUserId, phoneNumberId);
+    }
+
+    private async Task SendServicePhotoAndContinueAsync(Guid tenantId, Guid customerId, Guid serviceId, string waUserId, string phoneNumberId)
+    {
+        var service = (await _services.GetActiveForBotAsync(tenantId)).FirstOrDefault(x => x.ServiceId == serviceId);
+        if (service is null)
+        {
+            await SendServicesMenuAsync(tenantId, customerId, waUserId, phoneNumberId);
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(service.PrimaryImageUrl))
+        {
+            await _sender.SendImageAsync(waUserId, phoneNumberId, service.PrimaryImageUrl, service.Name);
+        }
+
+        await _sender.SendButtonsAsync(
+            waUserId,
+            phoneNumberId,
+            $"Продолжить запись на \"{service.Name}\"?",
+            [
+                ($"svc_book:{serviceId}", "Продолжить запись"),
+                ("main_menu", "В меню")
+            ]);
+
+        await SaveStateAsync(tenantId, customerId, BotState.PortfolioView, new FsmPayload { ServiceId = serviceId });
+    }
+
+    private async Task StartBookingFlowAsync(Guid tenantId, Guid customerId, Guid serviceId, string waUserId, string phoneNumberId)
+    {
+        var duplicate = await _bookings.GetActiveByCustomerAndServiceAsync(tenantId, customerId, serviceId);
+        if (duplicate is not null)
+        {
+            var svc = await _services.GetSnapshotAsync(tenantId, serviceId);
+            var title = svc is null ? "услуга" : "эта услуга";
+            await _sender.SendButtonsAsync(
+                waUserId,
+                phoneNumberId,
+                $"У вас уже есть запись на {title}. Что делаем?",
+                [
+                    ("dup_keep", "Оставить"),
+                    ("dup_rebook", "Перезаписаться")
+                ]);
+            await SaveStateAsync(tenantId, customerId, BotState.BookingConfirm, new FsmPayload { ServiceId = serviceId, ExistingBookingId = duplicate.Id, DuplicatePrompt = true });
             return;
         }
 
@@ -621,7 +675,7 @@ public class BotFsmHandler
                 var portfolio = Deserialize(payloadJson);
                 if (portfolio.ServiceId is not null)
                 {
-                    await MaybeShowPortfolioThenDatesAsync(tenantId, customerId, portfolio.ServiceId.Value, waUserId, phoneNumberId);
+                    await SendServicePhotoAndContinueAsync(tenantId, customerId, portfolio.ServiceId.Value, waUserId, phoneNumberId);
                 }
 
                 break;

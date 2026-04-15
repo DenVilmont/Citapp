@@ -9,14 +9,27 @@ namespace Citapp.Admin.Infrastructure.Repositories;
 
 public class ServiceRepository : IServiceRepository
 {
+    private const string DefaultServiceMediaBucket = "service-media";
+
     private readonly Client _client;
-    public ServiceRepository(Client client) => _client = client;
+    private readonly string _supabaseUrl;
+    private readonly string _supabaseAnonKey;
+    private readonly string _serviceMediaBucket;
+
+    public ServiceRepository(Client client, IConfiguration configuration)
+    {
+        _client = client;
+        _supabaseUrl = (configuration["Supabase:Url"] ?? string.Empty).TrimEnd('/');
+        _supabaseAnonKey = configuration["Supabase:AnonKey"] ?? string.Empty;
+        _serviceMediaBucket = configuration["Supabase:ServiceMediaBucket"] ?? DefaultServiceMediaBucket;
+    }
 
     public async Task<List<ServiceDto>> GetAllAsync(Guid tenantId)
     {
         var response = await _client.From<ServiceRow>()
             .Filter("tenant_id", Operator.Equals, tenantId.ToString())
             .Order("sort_order", Ordering.Ascending)
+            .Order("created_at", Ordering.Ascending)
             .Get();
 
         return response.Models.Select(ToDto).ToList();
@@ -103,8 +116,224 @@ public class ServiceRepository : IServiceRepository
         await row.Update<ServiceRow>();
     }
 
+    public async Task UpdateSortOrdersAsync(Guid tenantId, IReadOnlyList<Guid> orderedServiceIds)
+    {
+        if (orderedServiceIds.Count == 0)
+        {
+            return;
+        }
+
+        var response = await _client.From<ServiceRow>()
+            .Filter("tenant_id", Operator.Equals, tenantId.ToString())
+            .Get();
+
+        var byId = response.Models.ToDictionary(x => x.Id);
+        for (var index = 0; index < orderedServiceIds.Count; index++)
+        {
+            if (!byId.TryGetValue(orderedServiceIds[index], out var row))
+            {
+                continue;
+            }
+
+            row.SortOrder = index;
+            await row.Update<ServiceRow>();
+        }
+    }
+
+    public async Task<List<ServiceMediaDto>> GetMediaByServiceAsync(Guid tenantId, Guid serviceId)
+    {
+        await EnsureServiceBelongsToTenantAsync(tenantId, serviceId);
+        var response = await _client.From<ServiceMediaRow>()
+            .Filter("service_id", Operator.Equals, serviceId.ToString())
+            .Order("sort_order", Ordering.Ascending)
+            .Order("id", Ordering.Ascending)
+            .Get();
+
+        return response.Models.Select(ToDto).ToList();
+    }
+
+    public async Task<ServiceMediaDto> UploadMediaAsync(Guid tenantId, Guid serviceId, string fileName, string contentType, byte[] content, string accessToken)
+    {
+        await EnsureServiceBelongsToTenantAsync(tenantId, serviceId);
+        var sanitizedName = string.IsNullOrWhiteSpace(fileName) ? "image" : fileName.Trim().Replace(" ", "-");
+        var extension = Path.GetExtension(sanitizedName);
+        if (string.IsNullOrWhiteSpace(extension))
+        {
+            extension = GuessExtension(contentType);
+        }
+
+        var path = $"{tenantId}/{serviceId}/{Guid.NewGuid():N}{extension}";
+        await UploadToStorageAsync(path, content, contentType, accessToken);
+
+        var media = await GetMediaByServiceAsync(tenantId, serviceId);
+        var shouldBePrimary = media.Count == 0;
+        var response = await _client.From<ServiceMediaRow>().Insert(new ServiceMediaRow
+        {
+            ServiceId = serviceId,
+            StoragePath = path,
+            PublicUrl = BuildPublicUrl(path),
+            IsPrimary = shouldBePrimary,
+            SortOrder = media.Count
+        });
+
+        if (shouldBePrimary)
+        {
+            await SetPrimaryMediaAsync(tenantId, serviceId, response.Models.First().Id);
+        }
+
+        return ToDto(response.Models.First());
+    }
+
+    public async Task DeleteMediaAsync(Guid tenantId, Guid serviceId, Guid mediaId, string accessToken)
+    {
+        await EnsureServiceBelongsToTenantAsync(tenantId, serviceId);
+        var media = await _client.From<ServiceMediaRow>()
+            .Filter("id", Operator.Equals, mediaId.ToString())
+            .Filter("service_id", Operator.Equals, serviceId.ToString())
+            .Limit(1)
+            .Get();
+
+        var row = media.Models.FirstOrDefault();
+        if (row is null)
+        {
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(row.StoragePath))
+        {
+            await DeleteFromStorageAsync(row.StoragePath, accessToken);
+        }
+
+        await row.Delete<ServiceMediaRow>();
+
+        var remaining = await _client.From<ServiceMediaRow>()
+            .Filter("service_id", Operator.Equals, serviceId.ToString())
+            .Order("sort_order", Ordering.Ascending)
+            .Get();
+
+        ServiceMediaRow? first = null;
+        for (var index = 0; index < remaining.Models.Count; index++)
+        {
+            var existing = remaining.Models[index];
+            existing.SortOrder = index;
+            if (existing.IsPrimary)
+            {
+                first = existing;
+            }
+
+            await existing.Update<ServiceMediaRow>();
+        }
+
+        if (first is null && remaining.Models.Count > 0)
+        {
+            await SetPrimaryMediaAsync(tenantId, serviceId, remaining.Models[0].Id);
+        }
+    }
+
+    public async Task SetPrimaryMediaAsync(Guid tenantId, Guid serviceId, Guid mediaId)
+    {
+        await EnsureServiceBelongsToTenantAsync(tenantId, serviceId);
+        var response = await _client.From<ServiceMediaRow>()
+            .Filter("service_id", Operator.Equals, serviceId.ToString())
+            .Get();
+
+        foreach (var media in response.Models)
+        {
+            media.IsPrimary = media.Id == mediaId;
+            await media.Update<ServiceMediaRow>();
+        }
+    }
+
+    public async Task ClearPrimaryMediaAsync(Guid tenantId, Guid serviceId)
+    {
+        await EnsureServiceBelongsToTenantAsync(tenantId, serviceId);
+        var response = await _client.From<ServiceMediaRow>()
+            .Filter("service_id", Operator.Equals, serviceId.ToString())
+            .Filter("is_primary", Operator.Equals, true)
+            .Get();
+
+        foreach (var media in response.Models)
+        {
+            media.IsPrimary = false;
+            await media.Update<ServiceMediaRow>();
+        }
+    }
+
+    private async Task EnsureServiceBelongsToTenantAsync(Guid tenantId, Guid serviceId)
+    {
+        var response = await _client.From<ServiceRow>()
+            .Filter("id", Operator.Equals, serviceId.ToString())
+            .Filter("tenant_id", Operator.Equals, tenantId.ToString())
+            .Limit(1)
+            .Get();
+
+        if (response.Models.Count == 0)
+        {
+            throw new InvalidOperationException("Service not found for tenant.");
+        }
+    }
+
+    private async Task UploadToStorageAsync(string path, byte[] content, string contentType, string accessToken)
+    {
+        if (string.IsNullOrWhiteSpace(_supabaseUrl))
+        {
+            throw new InvalidOperationException("Supabase URL is not configured.");
+        }
+
+        using var http = new HttpClient();
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{_supabaseUrl}/storage/v1/object/{_serviceMediaBucket}/{path}")
+        {
+            Content = new ByteArrayContent(content)
+        };
+
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+        request.Headers.Add("apikey", _supabaseAnonKey);
+        request.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
+
+        var response = await http.SendAsync(request);
+        if (!response.IsSuccessStatusCode)
+        {
+            var payload = await response.Content.ReadAsStringAsync();
+            throw new InvalidOperationException($"Storage upload failed: {payload}");
+        }
+    }
+
+    private async Task DeleteFromStorageAsync(string path, string accessToken)
+    {
+        if (string.IsNullOrWhiteSpace(_supabaseUrl))
+        {
+            return;
+        }
+
+        using var http = new HttpClient();
+        using var request = new HttpRequestMessage(HttpMethod.Delete, $"{_supabaseUrl}/storage/v1/object/{_serviceMediaBucket}/{path}");
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+        request.Headers.Add("apikey", _supabaseAnonKey);
+
+        var response = await http.SendAsync(request);
+        if (!response.IsSuccessStatusCode && response.StatusCode != System.Net.HttpStatusCode.NotFound)
+        {
+            var payload = await response.Content.ReadAsStringAsync();
+            throw new InvalidOperationException($"Storage delete failed: {payload}");
+        }
+    }
+
+    private string BuildPublicUrl(string path) => $"{_supabaseUrl}/storage/v1/object/public/{_serviceMediaBucket}/{path}";
+
+    private static string GuessExtension(string contentType)
+        => contentType switch
+        {
+            "image/png" => ".png",
+            "image/webp" => ".webp",
+            "image/gif" => ".gif",
+            _ => ".jpg"
+        };
+
     private static ServiceDto ToDto(ServiceRow r)
         => new(r.Id, r.TenantId, r.Name, r.Description, r.DurationMinutes, r.PriceAmount, r.Currency, r.IsActive, r.SortOrder, r.CreatedAt);
+
+    private static ServiceMediaDto ToDto(ServiceMediaRow row)
+        => new(row.Id, row.ServiceId, row.StoragePath, row.PublicUrl, row.IsPrimary, row.SortOrder);
 }
 
 public class BookingRepository : IBookingRepository

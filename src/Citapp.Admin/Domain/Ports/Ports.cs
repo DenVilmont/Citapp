@@ -11,6 +11,13 @@ public interface IServiceRepository
     Task<ServiceDto> CreateAsync(ServiceDto dto, Guid tenantId);
     Task<ServiceDto> UpdateAsync(Guid id, ServiceDto dto, Guid tenantId);
     Task SetActiveAsync(Guid id, Guid tenantId, bool isActive);
+    Task UpdateSortOrdersAsync(Guid tenantId, IReadOnlyList<Guid> orderedServiceIds);
+
+    Task<List<ServiceMediaDto>> GetMediaByServiceAsync(Guid tenantId, Guid serviceId);
+    Task<ServiceMediaDto> UploadMediaAsync(Guid tenantId, Guid serviceId, string fileName, string contentType, byte[] content, string accessToken);
+    Task DeleteMediaAsync(Guid tenantId, Guid serviceId, Guid mediaId, string accessToken);
+    Task SetPrimaryMediaAsync(Guid tenantId, Guid serviceId, Guid mediaId);
+    Task ClearPrimaryMediaAsync(Guid tenantId, Guid serviceId);
 }
 
 public interface IBookingRepository

@@ -1,5 +1,6 @@
 @page "/servicelist"
 @page "/services"
+@using Microsoft.AspNetCore.Components.Forms
 @inject AdminSession Session
 @inject IServiceRepository ServiceRepository
 @inject NavigationManager Nav
@@ -23,7 +24,6 @@
         <div><label>Duration min</label><br /><input @bind="_duration" type="number" /></div>
         <div><label>Price</label><br /><input @bind="_price" type="number" step="0.01" /></div>
         <div><label>Currency</label><br /><input @bind="_currency" /></div>
-        <div><label>Sort</label><br /><input @bind="_sortOrder" type="number" /></div>
     </div>
     <div><label><input @bind="_isActive" type="checkbox" /> Active</label></div>
     <button @onclick="SaveAsync">Save</button>
@@ -33,16 +33,42 @@
     }
 </div>
 
+<p style="margin:4px 0 12px 0; color:#555;">Drag and drop rows to reorder services.</p>
 <table>
-    <thead><tr><th>Name</th><th>Duration</th><th>Price</th><th>Active</th><th></th></tr></thead>
+    <thead><tr><th></th><th>Name</th><th>Duration</th><th>Price</th><th>Active</th><th>Media</th><th></th></tr></thead>
     <tbody>
     @foreach (var service in _services)
     {
-        <tr>
+        <tr draggable="true"
+            @ondragstart="() => StartDrag(service.Id)"
+            @ondragover:preventDefault
+            @ondrop="() => DropOnServiceAsync(service.Id)"
+            style="border-top:1px solid #eee; vertical-align:top;">
+            <td style="cursor:grab;">↕</td>
             <td>@service.Name</td>
             <td>@service.DurationMinutes min</td>
             <td>@service.PriceAmount @service.Currency</td>
             <td>@(service.IsActive ? "Yes" : "No")</td>
+            <td>
+                <InputFile OnChange="(e) => UploadMediaAsync(service.Id, e)" accept="image/*" />
+                <div style="margin-top:6px;">
+                    @foreach (var media in GetMedia(service.Id))
+                    {
+                        <div style="margin-bottom:4px;">
+                            <a href="@media.PublicUrl" target="_blank">image</a>
+                            @if (media.IsPrimary)
+                            {
+                                <b>(primary)</b>
+                            }
+                            else
+                            {
+                                <button @onclick="() => SetPrimaryAsync(service.Id, media.Id)">Set primary</button>
+                            }
+                            <button @onclick="() => DeleteMediaAsync(service.Id, media.Id)">Delete</button>
+                        </div>
+                    }
+                </div>
+            </td>
             <td>
                 <button @onclick="() => Edit(service)">Edit</button>
                 <button @onclick="() => ToggleActiveAsync(service)">@((service.IsActive ? "Deactivate" : "Activate"))</button>
@@ -54,13 +80,14 @@
 
 @code {
     private readonly List<ServiceDto> _services = new();
+    private readonly Dictionary<Guid, List<ServiceMediaDto>> _mediaByServiceId = new();
     private Guid? _editingId;
+    private Guid? _draggedServiceId;
     private string _name = string.Empty;
     private string _description = string.Empty;
     private int _duration = 30;
     private decimal _price;
     private string _currency = "EUR";
-    private int _sortOrder;
     private bool _isActive = true;
     private string _error = string.Empty;
     private string _message = string.Empty;
@@ -80,7 +107,13 @@
     private async Task ReloadAsync()
     {
         _services.Clear();
+        _mediaByServiceId.Clear();
+
         _services.AddRange(await ServiceRepository.GetAllAsync(Session.TenantId!.Value));
+        foreach (var service in _services)
+        {
+            _mediaByServiceId[service.Id] = await ServiceRepository.GetMediaByServiceAsync(Session.TenantId.Value, service.Id);
+        }
     }
 
     private async Task SaveAsync()
@@ -90,7 +123,8 @@
 
         try
         {
-            var dto = new ServiceDto(_editingId ?? Guid.Empty, Session.TenantId!.Value, _name, _description, _duration, _price, _currency, _isActive, _sortOrder, DateTimeOffset.UtcNow);
+            var sortOrder = _editingId is null ? _services.Count : _services.First(x => x.Id == _editingId.Value).SortOrder;
+            var dto = new ServiceDto(_editingId ?? Guid.Empty, Session.TenantId!.Value, _name, _description, _duration, _price, _currency, _isActive, sortOrder, DateTimeOffset.UtcNow);
             if (_editingId is null)
             {
                 await ServiceRepository.CreateAsync(dto, Session.TenantId.Value);
@@ -119,7 +153,6 @@
         _duration = service.DurationMinutes;
         _price = service.PriceAmount;
         _currency = service.Currency;
-        _sortOrder = service.SortOrder;
         _isActive = service.IsActive;
     }
 
@@ -129,6 +162,75 @@
         await ReloadAsync();
     }
 
+    private void StartDrag(Guid serviceId) => _draggedServiceId = serviceId;
+
+
+    private async Task DropOnServiceAsync(Guid targetServiceId)
+    {
+        if (_draggedServiceId is null || _draggedServiceId == targetServiceId)
+        {
+            return;
+        }
+
+        var draggedIndex = _services.FindIndex(x => x.Id == _draggedServiceId.Value);
+        var targetIndex = _services.FindIndex(x => x.Id == targetServiceId);
+        if (draggedIndex < 0 || targetIndex < 0)
+        {
+            return;
+        }
+
+        var moved = _services[draggedIndex];
+        _services.RemoveAt(draggedIndex);
+        if (targetIndex > draggedIndex)
+        {
+            targetIndex--;
+        }
+
+        _services.Insert(targetIndex, moved);
+        _draggedServiceId = null;
+
+        await ServiceRepository.UpdateSortOrdersAsync(Session.TenantId!.Value, _services.Select(x => x.Id).ToList());
+        await ReloadAsync();
+    }
+
+    private async Task UploadMediaAsync(Guid serviceId, InputFileChangeEventArgs e)
+    {
+        _error = string.Empty;
+        var file = e.File;
+        if (file is null)
+        {
+            return;
+        }
+
+        if (!file.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+        {
+            _error = "Only image files are supported.";
+            return;
+        }
+
+        await using var stream = file.OpenReadStream(5 * 1024 * 1024);
+        using var ms = new MemoryStream();
+        await stream.CopyToAsync(ms);
+        await ServiceRepository.UploadMediaAsync(Session.TenantId!.Value, serviceId, file.Name, file.ContentType, ms.ToArray(), Session.AccessToken);
+        _message = "Image uploaded.";
+        _mediaByServiceId[serviceId] = await ServiceRepository.GetMediaByServiceAsync(Session.TenantId.Value, serviceId);
+    }
+
+    private async Task SetPrimaryAsync(Guid serviceId, Guid mediaId)
+    {
+        await ServiceRepository.SetPrimaryMediaAsync(Session.TenantId!.Value, serviceId, mediaId);
+        _mediaByServiceId[serviceId] = await ServiceRepository.GetMediaByServiceAsync(Session.TenantId.Value, serviceId);
+    }
+
+    private async Task DeleteMediaAsync(Guid serviceId, Guid mediaId)
+    {
+        await ServiceRepository.DeleteMediaAsync(Session.TenantId!.Value, serviceId, mediaId, Session.AccessToken);
+        _mediaByServiceId[serviceId] = await ServiceRepository.GetMediaByServiceAsync(Session.TenantId.Value, serviceId);
+    }
+
+    private List<ServiceMediaDto> GetMedia(Guid serviceId)
+        => _mediaByServiceId.TryGetValue(serviceId, out var items) ? items : new List<ServiceMediaDto>();
+
     private void ResetForm()
     {
         _editingId = null;
@@ -137,7 +239,6 @@
         _duration = 30;
         _price = 0;
         _currency = "EUR";
-        _sortOrder = 0;
         _isActive = true;
     }
 }
