@@ -44,12 +44,7 @@ public sealed class BookingPageService
             status = parsed;
         }
 
-        var statusFilterForRepository = status == BookingStatus.BlockedByMaster ? null : status;
-        var bookings = await _bookingRepository.GetForRangeAsync(tenantId, DateOnly.Parse(fromText), DateOnly.Parse(toText), statusFilterForRepository);
-        if (status == BookingStatus.BlockedByMaster)
-        {
-            bookings = bookings.Where(x => x.Status == BookingStatus.BlockedByMaster).ToList();
-        }
+        var bookings = await _bookingRepository.GetForRangeAsync(tenantId, DateOnly.Parse(fromText), DateOnly.Parse(toText), status);
 
         var customerLabels = new Dictionary<Guid, string>();
         var serviceLabels = new Dictionary<Guid, string>();
