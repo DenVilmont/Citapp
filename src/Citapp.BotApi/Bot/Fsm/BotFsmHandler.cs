@@ -840,9 +840,10 @@ public class BotFsmHandler
                 break;
             case BotState.BookingConfirm:
                 var confirm = Deserialize(payloadJson);
+                OutboundSendResult confirmSendResult;
                 if (confirm.DuplicatePrompt)
                 {
-                    await _sender.SendButtonsAsync(
+                    confirmSendResult = await _sender.SendButtonsAsync(
                         waUserId,
                         phoneNumberId,
                         "Выберите действие кнопкой.",
@@ -854,7 +855,7 @@ public class BotFsmHandler
                 }
                 else
                 {
-                    await _sender.SendButtonsAsync(
+                    confirmSendResult = await _sender.SendButtonsAsync(
                         waUserId,
                         phoneNumberId,
                         "Подтвердите запись кнопкой.",
@@ -865,7 +866,14 @@ public class BotFsmHandler
                         ]);
                 }
 
-                await SaveStateAsync(tenantId, customerId, BotState.BookingConfirm, confirm);
+                await SaveStateIfSentAsync(
+                    confirmSendResult,
+                    tenantId,
+                    customerId,
+                    BotState.BookingConfirm,
+                    confirm,
+                    state,
+                    "repeat_booking_confirm");
                 break;
             case BotState.CancelSelectBooking:
                 await SendCancelableBookingsMenuAsync(tenantId, customerId, waUserId, phoneNumberId);
